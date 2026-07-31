@@ -1,0 +1,96 @@
+name: northwind
+
+# Northwind Systems local stack.
+#
+#   northwind  : Postgres holding the ops / erp / crm source schemas
+#   analytics  : an empty Postgres for you to build your own warehouse in
+#                (stands in for Redshift -- no schemas are created for you)
+#   fakeforce  : Salesforce-shaped REST API over the CRM objects
+#
+#   docker compose up -d --build
+#   python generator/generate.py
+#   python generator/load.py
+#
+# The project name is pinned above. Without it Compose names the project after
+# the directory, so a copy in ~/Downloads/northwind and one in ~/dev/northwind2
+# are different projects -- and `docker compose logs` in one shows nothing while
+# a container from the other is still running and holding the port.
+
+services:
+  northwind:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: northwind
+      POSTGRES_PASSWORD: northwind
+      POSTGRES_DB: northwind
+    command: >
+      postgres -c shared_buffers=512MB -c work_mem=64MB
+               -c maintenance_work_mem=512MB -c max_wal_size=4GB
+    ports: ["5433:5432"]
+    volumes: ["northwind_src:/var/lib/postgresql/data"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U northwind -d northwind"]
+      interval: 5s
+      retries: 10
+
+  analytics:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: analytics
+      POSTGRES_PASSWORD: analytics
+      POSTGRES_DB: analytics
+    command: >
+      postgres -c shared_buffers=512MB -c work_mem=64MB
+               -c maintenance_work_mem=512MB -c max_wal_size=4GB
+    ports: ["5434:5432"]
+    volumes: ["northwind_analytics:/var/lib/postgresql/data"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U analytics -d analytics"]
+      interval: 5s
+      retries: 10
+
+  fakeforce:
+    build: ./fakeforce
+    ports: ["8080:8080"]
+    volumes:
+      - "./seed:/app/seed:ro"
+      # Bind-mount the complete package so restarts pick up source changes.
+      - "./fakeforce:/app/fakeforce:ro"
+      # Durable cursors, jobs, artifacts, and DuckDB spill files survive a
+      # container restart and remain separate from generated source data.
+      - "./state:/app/state"
+      # Bulk Query CSV artifacts are intentionally outside the repository.
+      - "${FAKEFORCE_EXPORTS_DIR:?Set FAKEFORCE_EXPORTS_DIR in .env}:/app/exports"
+    # Sources are scanned lazily by DuckDB. The persistent state volume also
+    # receives spill files, cursor indexes, durable jobs, and Bulk results.
+    shm_size: 256m
+    environment:
+      FAKEFORCE_SEED_DIR: /app/seed
+      FAKEFORCE_STATE_DIR: /app/state
+      FAKEFORCE_BULK_QUERY_RESULTS_DIR: /app/exports
+      FAKEFORCE_MEMORY_LIMIT: "4GB"
+      FAKEFORCE_TEMP_DIRECTORY: /app/state/spill
+      FAKEFORCE_MAX_TEMP_SIZE: "100GB"
+      FAKEFORCE_DISK_RESERVE_BYTES: "5368709120"
+      FAKEFORCE_HEAVY_QUERY_WORKERS: "1"
+      FAKEFORCE_LIGHTWEIGHT_REQUEST_WORKERS: "8"
+      FAKEFORCE_BULK_WORKERS: "1"
+      FAKEFORCE_SYNC_QUERY_TIMEOUT_SECONDS: "120"
+      FAKEFORCE_PAGE_SIZE: "2000"     # raise for large extracts: fewer round trips
+      FAKEFORCE_RATE_LIMIT: "120"     # requests/min before 429
+      FAKEFORCE_ERROR_RATE: "0.0"
+      FAKEFORCE_DRIFT_AFTER: ""
+    healthcheck:
+      # python is guaranteed present in this image; wget and curl are not.
+      test: ["CMD", "python", "-c",
+             "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8080/health', timeout=10).status == 200 else 1)"]
+      interval: 15s
+      timeout: 15s
+      retries: 5
+      # Loading millions of CRM records takes minutes. Without a start_period the
+      # container is declared unhealthy while it is still legitimately starting.
+      start_period: 300s
+
+volumes:
+  northwind_src:
+  northwind_analytics:

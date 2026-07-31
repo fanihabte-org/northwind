@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "objects": [
+    {
+      "name": "Account",
+      "sources": ["crm_accounts.parquet"],
+      "id_field": "Id",
+      "soft_delete_field": "IsDeleted",
+      "mode": "read_only"
+    },
+    {
+      "name": "Opportunity",
+      "sources": ["crm_opportunities.parquet"],
+      "id_field": "Id",
+      "soft_delete_field": "IsDeleted",
+      "mode": "read_only"
+    }
+  ]
+}

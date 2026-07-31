@@ -1,0 +1,23 @@
+# data generation
+numpy>=1.26
+pandas>=2.2
+pyarrow>=15          # only needed for --format parquet
+duckdb>=1.1          # lazy SQL execution and durable FakeForce state
+
+# FakeForce API
+fastapi>=0.115
+uvicorn[standard]>=0.32
+httpx>=0.27             # API integration tests
+pytest>=8.0             # unit and integration test runner
+
+# loading into Postgres
+psycopg[binary]>=3.2
+
+# your own pipeline -- install what you actually reach for
+# requests>=2.32
+# apache-airflow>=3.0
+# dbt-postgres>=1.9
+# great-expectations>=1.0
+# soda-core-postgres>=3.3
+# scikit-learn>=1.5
+# statsmodels>=0.14

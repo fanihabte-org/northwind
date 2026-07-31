@@ -1,0 +1,72 @@
+name: Test and deploy
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: northwind-production
+  cancel-in-progress: false
+
+jobs:
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: python -m pip install --upgrade pip
+      - run: python -m pip install -r requirements.txt
+      - name: Generate deterministic CI seed
+        run: >
+          python generator/generate.py --scale 0.05 --format parquet
+          --seed 20260728
+      - run: python -m pytest
+      - name: Validate Compose configuration
+        env:
+          FAKEFORCE_EXPORTS_DIR: ${{ runner.temp }}/fakeforce-exports
+        run: |
+          mkdir -p "$FAKEFORCE_EXPORTS_DIR"
+          docker compose config --quiet
+
+  deploy:
+    name: Deploy FakeForce
+    needs: test
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: [self-hosted, dataforge-deploy]
+    environment: production
+    steps:
+      - name: Update trusted checkout and restart FakeForce
+        env:
+          DEPLOY_DIR: ${{ vars.DATAFORGE_DEPLOY_DIR }}
+          FAKEFORCE_EXPORTS_DIR: ${{ vars.DATAFORGE_EXPORTS_DIR }}
+          EXPECTED_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          : "${DEPLOY_DIR:?Set the DATAFORGE_DEPLOY_DIR repository variable}"
+          : "${FAKEFORCE_EXPORTS_DIR:?Set the DATAFORGE_EXPORTS_DIR repository variable}"
+          test -d "$DEPLOY_DIR/.git"
+          git -C "$DEPLOY_DIR" diff --quiet
+          git -C "$DEPLOY_DIR" diff --cached --quiet
+          git -C "$DEPLOY_DIR" fetch --prune origin
+          git -C "$DEPLOY_DIR" cat-file -e "$EXPECTED_SHA^{commit}"
+          git -C "$DEPLOY_DIR" checkout --detach "$EXPECTED_SHA"
+          mkdir -p "$FAKEFORCE_EXPORTS_DIR"
+          export FAKEFORCE_EXPORTS_DIR
+          docker compose --project-directory "$DEPLOY_DIR" up -d --build --no-deps fakeforce
+          for attempt in $(seq 1 24); do
+            if docker compose --project-directory "$DEPLOY_DIR" exec -T fakeforce python -c \
+              "import urllib.request; urllib.request.urlopen('http://localhost:8080/health', timeout=5)"; then
+              exit 0
+            fi
+            sleep 5
+          done
+          exit 1

@@ -230,6 +230,26 @@ class SimulationStateStore:
             raise SimulationStateError("source run has not been claimed")
         return row[0]
 
+    def status_snapshot(self) -> dict[str, object]:
+        """Read the durable simulation control state without mutating it."""
+        with self.connection() as conn:
+            current = conn.execute(
+                "SELECT run_date, state, failure_message FROM simulation_runs "
+                "WHERE state != 'completed' ORDER BY run_date LIMIT 1"
+            ).fetchone()
+            counts = dict(conn.execute(
+                "SELECT state, count(*) FROM simulation_runs GROUP BY state"
+            ).fetchall())
+        return {
+            "baseline_completed_date": self.baseline_completed_date().isoformat(),
+            "last_completed_date": self.last_completed_date().isoformat(),
+            "run_counts": counts,
+            "incomplete_run": None if current is None else {
+                "date": current[0].isoformat(), "state": current[1],
+                "failure_message": current[2],
+            },
+        }
+
     def record_events(self, events: list[SourceEvent]) -> None:
         """Persist deterministic planned events; retries do not duplicate them."""
         with self.connection() as conn:

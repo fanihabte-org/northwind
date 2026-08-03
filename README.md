@@ -245,6 +245,9 @@ curl -s -X POST localhost:8080/_chaos -H 'content-type: application/json' \
 CSV-result locator requests. On a `429 REQUEST_LIMIT_EXCEEDED`, wait for the
 number of seconds in `Retry-After` before retrying the same request or locator.
 
+Use `python -m simulator.status --state-directory state` to inspect the durable
+simulation baseline, completion watermark, and any incomplete daily run.
+
 ### Breaking it on purpose
 
 ```bash

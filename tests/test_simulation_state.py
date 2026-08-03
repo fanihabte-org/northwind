@@ -73,6 +73,19 @@ def test_interrupted_run_is_reclaimed_without_advancing_the_watermark(tmp_path) 
     assert store.source_run_state(missing, "crm") == "applied"
 
 
+def test_status_snapshot_exposes_watermarks_and_incomplete_work(tmp_path) -> None:
+    store = SimulationStateStore(tmp_path / "simulator.duckdb", SimulationPolicy())
+    baseline = date(2026, 7, 24)
+    store.initialize(baseline)
+    store.claim_run(date(2026, 7, 25), seed=42)
+
+    snapshot = store.status_snapshot()
+
+    assert snapshot["baseline_completed_date"] == "2026-07-24"
+    assert snapshot["last_completed_date"] == "2026-07-24"
+    assert snapshot["incomplete_run"]["date"] == "2026-07-25"
+
+
 def test_state_rejects_out_of_order_source_and_date_completion(tmp_path) -> None:
     store = SimulationStateStore(tmp_path / "simulator.duckdb", SimulationPolicy())
     first_missing = date(2026, 7, 25)

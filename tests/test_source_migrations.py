@@ -53,6 +53,7 @@ def test_discovery_reads_the_independent_versioned_source_chains() -> None:
         "002_add_audit_metadata.sql",
         "003_add_audit_backfill_state.sql",
         "004_enforce_audit_metadata.sql",
+        "005_enforce_revenue_posting_immutability.sql",
     ]
     assert "CREATE TABLE IF NOT EXISTS ops.orders" in ops[0].sql
     assert "ADD COLUMN IF NOT EXISTS created_at" in ops[1].sql
@@ -63,6 +64,8 @@ def test_discovery_reads_the_independent_versioned_source_chains() -> None:
     assert "simulation.audit_backfill_progress" in erp[2].sql
     assert "ALTER COLUMN created_at SET NOT NULL" in erp[3].sql
     assert "ck_revenue_postings_created_at" in erp[3].sql
+    assert "tr_revenue_postings_append_only" in erp[4].sql
+    assert "BEFORE UPDATE OR DELETE" in erp[4].sql
 
 
 def test_apply_records_pending_migrations_and_is_idempotent(tmp_path: Path) -> None:

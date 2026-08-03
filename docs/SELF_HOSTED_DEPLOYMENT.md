@@ -103,9 +103,12 @@ Before enabling the deploy job:
    - `NORTHWIND_DEPLOY_DIR` — for example `/Users/your-user/northwind`
    - `NORTHWIND_EXPORTS_DIR` — for example `/Users/your-user/data_forge/exports`
 
-The runner fetches the exact tested commit, updates the clean deployment checkout,
-rebuilds the `fakeforce` and `simulator` services, and waits for the API health
-endpoint. It does not run deployment code for pull requests.
+The runner fetches the exact tested commit, rebuilds the migration, `fakeforce`,
+and simulator images, and runs the one-shot migration service before restarting
+the application services. This means a new versioned database migration is applied
+on the target machine rather than being skipped because an older migration container
+already exited successfully. The runner then waits for the API health endpoint. It
+does not run deployment code for pull requests.
 
 `.env`, `seed/`, `state/`, exports, virtual environments, and macOS `.DS_Store`
 metadata are all ignored by Git. The deploy job therefore continues to reject real

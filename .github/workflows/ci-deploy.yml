@@ -81,7 +81,12 @@ jobs:
           git -C "$DEPLOY_DIR" checkout --detach "$EXPECTED_SHA"
           mkdir -p "$FAKEFORCE_EXPORTS_DIR"
           export FAKEFORCE_EXPORTS_DIR
-          docker compose --project-directory "$DEPLOY_DIR" up -d --build fakeforce simulator
+          # Build and run migrations explicitly. A previously successful one-shot
+          # container otherwise satisfies Compose's dependency condition without
+          # applying migrations added by this deployment.
+          docker compose --project-directory "$DEPLOY_DIR" build migrations fakeforce simulator
+          docker compose --project-directory "$DEPLOY_DIR" run --rm migrations
+          docker compose --project-directory "$DEPLOY_DIR" up -d fakeforce simulator
           for attempt in $(seq 1 24); do
             if docker compose --project-directory "$DEPLOY_DIR" exec -T fakeforce python -c \
               "import urllib.request; urllib.request.urlopen('http://localhost:8080/health', timeout=5)"; then

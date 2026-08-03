@@ -642,7 +642,9 @@ regression on distance, weight, service level and carrier.
   `004_enforce_audit_metadata.sql` makes the fields mandatory and rejects reverse
   timestamp order. Revenue postings are append-only accounting entries:
   `created_at` equals `posted_at`, while corrections must be separate `CRN` or
-  `ADJ` rows, not in-place updates.
+  `ADJ` rows, not in-place updates. Migration
+  `005_enforce_revenue_posting_immutability.sql` enforces that rule in the ERP
+  database: `UPDATE` and `DELETE` are rejected for posted journal records.
 - **Money is in the currency named beside it.** `ops` amounts are in
   `orders.currency_code`; `erp` carries both bases explicitly. Nothing is pre-converted
   to USD except `unit_cost_usd`, `freight_cost_usd`, `list_price_usd` and

@@ -5,8 +5,8 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def test_ops_and_erp_have_independent_schema_scripts() -> None:
-    ops = (ROOT / "sql" / "01_ops.sql").read_text()
-    erp = (ROOT / "sql" / "02_erp.sql").read_text()
+    ops = (ROOT / "sql" / "migrations" / "ops" / "001_initial_schema.sql").read_text()
+    erp = (ROOT / "sql" / "migrations" / "erp" / "001_initial_schema.sql").read_text()
 
     assert "CREATE TABLE IF NOT EXISTS ops.orders" in ops
     assert "CREATE TABLE IF NOT EXISTS ops.invoices" in ops
@@ -34,3 +34,5 @@ def test_compose_uses_distinct_ops_and_erp_databases() -> None:
     assert "SIMULATION_BASELINE_DATE" in compose
     assert "SIMULATION_DUCKDB_MEMORY_LIMIT" in compose
     assert "shared_buffers=128MB" in compose
+    assert "  migrations:\n" in compose
+    assert "service_completed_successfully" in compose

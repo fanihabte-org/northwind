@@ -66,6 +66,19 @@ services:
       interval: 5s
       retries: 10
 
+  migrations:
+    build:
+      context: .
+      dockerfile: generator/Dockerfile
+    depends_on:
+      ops:
+        condition: service_healthy
+      erp:
+        condition: service_healthy
+    environment:
+      OPS_PG_DSN: postgresql://ops:ops@ops:5432/ops
+      ERP_PG_DSN: postgresql://erp:erp@erp:5432/erp
+
   fakeforce:
     build: ./fakeforce
     ports: ["8080:8080"]
@@ -119,6 +132,8 @@ services:
         condition: service_healthy
       erp:
         condition: service_healthy
+      migrations:
+        condition: service_completed_successfully
     volumes:
       - "./seed:/app/seed:ro"
       # Shares the CRM deltas and durable simulation watermark with FakeForce.

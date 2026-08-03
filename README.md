@@ -22,7 +22,7 @@ pip install -r requirements.txt
 cp .env.example .env                         # set an absolute exports directory
 python generator/generate.py --format parquet # creates local, ignored seed data
 
-docker compose up -d
+docker compose up -d --build          # applies versioned source migrations
 python generator/load.py              # loads separate Ops and ERP databases
 ```
 
@@ -110,9 +110,10 @@ prefer it unless you specifically want to eyeball raw text.
 
 ```
 generator/generate.py     the business simulation -- read it, or don't
-generator/load.py         applies sql/01_sources.sql and COPYs the data in
-sql/01_ops.sql            Ops source DDL: locally owned PK / FK / UNIQUE / CHECK constraints
-sql/02_erp.sql            ERP source DDL: locally owned PK / FK / UNIQUE / CHECK constraints
+generator/migrate.py      applies checksummed, versioned source schema migrations
+generator/load.py         runs pending migrations, then COPYs the one-time seed data in
+sql/migrations/ops/       Ops migrations: locally owned PK / FK / UNIQUE / CHECK constraints
+sql/migrations/erp/       ERP migrations: locally owned PK / FK / UNIQUE / CHECK constraints
 fakeforce/app.py          Salesforce-shaped REST API over catalogued CRM files
 fakeforce/catalog.json    default object-to-file catalogue (not hard-coded in the API)
 docs/DATA_DICTIONARY.md   every table, column, relationship and metric
@@ -130,9 +131,17 @@ committed.
 
 ## The sources are valid databases
 
-`sql/01_sources.sql` enforces every constraint a competent DBA would put on these
-systems. `generator/load.py` loads under all of them in a single transaction — if
-anything were violated, nothing would commit.
+Each source owns an independent, checksummed migration ledger in
+`simulation.schema_migrations`. The Compose `migrations` service runs pending
+migrations before the simulator starts; it never drops schemas or truncates data.
+You can also run `python generator/migrate.py` or
+`python generator/load.py --migrate-only` from the host. The one-time loader then
+loads each system in a transaction — if a local constraint is violated, none of
+that system's rows commit.
+
+`sql/01_sources.sql` is retained only as the original single-database reference
+script. Do not run it against the split source databases: it drops schemas and
+does not represent the deployed ownership model.
 
 That matters because it means the data is not sabotaged. It is a working business,
 recorded correctly by three systems that were never designed to talk to each other.

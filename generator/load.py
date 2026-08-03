@@ -1,13 +1,15 @@
 """
 Load the generated datasets into Postgres.
 
-Applies each source system's independently owned DDL and then COPYs its files in.
+Applies each source system's independently owned, versioned migrations and then
+COPYs its files in.
 Ops and ERP are intentionally separate Postgres databases. If any system-local
 primary key, foreign key, unique, or check constraint is violated, that system's
 transaction aborts and nothing is committed.
 
     python generator/load.py                        # ops + erp
     python generator/load.py --system ops
+    python generator/load.py --migrate-only
     OPS_PG_DSN='postgresql://...' python generator/load.py --system ops
 
 Reads whichever format the generator produced -- .csv.gz, .csv or .parquet.
@@ -24,6 +26,8 @@ import os
 import sys
 import time
 from pathlib import Path
+
+from migrate import apply_migrations
 
 try:
     import psycopg
@@ -54,8 +58,8 @@ ERP_TABLES = [
     ("erp.revenue_postings",  "erp_revenue_postings"),
 ]
 SYSTEMS = {
-    "ops": (OPS_DSN, ROOT / "sql" / "01_ops.sql", OPS_TABLES),
-    "erp": (ERP_DSN, ROOT / "sql" / "02_erp.sql", ERP_TABLES),
+    "ops": (OPS_DSN, OPS_TABLES),
+    "erp": (ERP_DSN, ERP_TABLES),
 }
 
 
@@ -124,6 +128,11 @@ def copy_table(cur, table: str, stem: str) -> int:
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--system", choices=("ops", "erp", "all"), default="all")
+    ap.add_argument(
+        "--migrate-only",
+        action="store_true",
+        help="apply pending schema migrations without loading the one-time seed",
+    )
     ap.add_argument("--ops-dsn", default=OPS_DSN)
     ap.add_argument("--erp-dsn", default=ERP_DSN)
     args = ap.parse_args()
@@ -132,13 +141,19 @@ def main() -> int:
     selected = ("ops", "erp") if args.system == "all" else (args.system,)
     dsn_overrides = {"ops": args.ops_dsn, "erp": args.erp_dsn}
     for system in selected:
-        _, ddl_path, loads = SYSTEMS[system]
+        _, loads = SYSTEMS[system]
         dsn = dsn_overrides[system]
         print(f"\n{system.upper()} target: {dsn.split('@')[-1]}")
         with psycopg.connect(dsn, autocommit=False) as conn:
             with conn.cursor() as cur:
-                print(f"Applying {ddl_path.relative_to(ROOT)} (all local constraints enabled)")
-                cur.execute(ddl_path.read_text())
+                applied = apply_migrations(conn, system)
+                if applied:
+                    print("Applied migrations: " + ", ".join(migration.filename for migration in applied))
+                else:
+                    print("Schema is already current")
+                if args.migrate_only:
+                    conn.commit()
+                    continue
                 total = 0
                 for table, stem in loads:
                     t = time.time()

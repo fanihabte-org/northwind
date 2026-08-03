@@ -67,11 +67,17 @@ them. To use a different dataset, keep the configured Parquet/CSV files under th
 catalog's approved data root and update `fakeforce/catalog.json` rather than hard-code
 object-specific file paths in the API.
 
-After the Ops and ERP services are healthy, load their baseline once:
+The Compose `migrations` service applies non-destructive, checksummed Ops and ERP
+schema migrations before the simulator starts. After the Ops and ERP services are
+healthy, load their baseline once:
 
 ```bash
 python generator/load.py
 ```
+
+For a later schema-only upgrade, run `python generator/migrate.py`; it records
+the applied migration checksum in each source database and never reloads or
+deletes business rows.
 
 The simulator service waits for both database baselines and the CRM Parquet files
 before it initializes or advances simulation state. The `ops.invoices` table can

@@ -1,3 +1,5 @@
+-- LEGACY REFERENCE ONLY. Do not run this file against the deployed split
+-- Ops and ERP databases: it drops schemas and predates sql/migrations/.
 -- =====================================================================
 -- Northwind Systems :: SOURCE SYSTEMS
 --

@@ -181,6 +181,28 @@ def test_bulk_query_job_can_be_created_inspected_and_aborted(
     assert aborted.json()["state"] == "Aborted"
 
 
+def test_bulk_query_polling_returns_retry_guidance_when_the_shared_throttle_is_full(
+    client: TestClient, auth_headers: dict[str, str]
+) -> None:
+    """Bulk submission, polling, and result downloads share the API limiter."""
+    fakeforce.chaos["rate_limit_per_min"] = 1
+    created = client.post(
+        "/services/data/v60.0/jobs/query",
+        headers=auth_headers,
+        json={"operation": "query", "query": "SELECT Id FROM Account LIMIT 1"},
+    )
+    assert created.status_code == 200
+
+    throttled = client.get(
+        f"/services/data/v60.0/jobs/query/{created.json()['id']}", headers=auth_headers
+    )
+
+    assert throttled.status_code == 429
+    assert throttled.json()[0]["errorCode"] == "REQUEST_LIMIT_EXCEEDED"
+    assert 1 <= int(throttled.headers["Retry-After"]) <= 60
+    assert throttled.headers["Sforce-Limit-Info"].startswith("api-usage=")
+
+
 def test_bulk_ingest_job_uploads_csv_to_disk_then_closes_durably(
     client: TestClient, auth_headers: dict[str, str], tmp_path, monkeypatch
 ) -> None:

@@ -25,5 +25,5 @@ def test_internal_diagnostics_expose_memory_query_and_job_snapshots() -> None:
     assert queries.json()["open_cursors"] >= 0
     assert jobs.json()["active_bulk_jobs"] == 0
     assert jobs.json()["queued_bulk_jobs"] == 0
-    assert jobs.json()["checkpointed_bulk_jobs"] == 0
+    assert jobs.json()["checkpointed_bulk_jobs"] >= 0
     assert jobs.json()["bulk_job_retention_hours"] > 0

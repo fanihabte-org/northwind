@@ -236,6 +236,11 @@ curl -s -X POST localhost:8080/_chaos -H 'content-type: application/json' \
   -d '{"page_size": 50000, "rate_limit_per_min": 100000}'
 ```
 
+`rate_limit_per_min` is a FakeForce safety throttle shared by every
+`/services/data/v60.0` request, including Bulk Query submission, polling, and
+CSV-result locator requests. On a `429 REQUEST_LIMIT_EXCEEDED`, wait for the
+number of seconds in `Retry-After` before retrying the same request or locator.
+
 ### Breaking it on purpose
 
 ```bash

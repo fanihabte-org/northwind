@@ -281,6 +281,8 @@ def generate(scale: float, fmt: str, out_dir: Path, seed: int) -> dict:
     # =====================================================================
     companies = pd.DataFrame(COMPANIES, columns=[
         "company_code", "company_name", "functional_currency", "country"])
+    companies["created_at"] = "2022-01-03 08:00:00"
+    companies["updated_at"] = "2022-01-03 08:00:00"
     emit("erp_companies", companies)
 
     warehouses = pd.DataFrame(WAREHOUSES, columns=[
@@ -314,6 +316,10 @@ def generate(scale: float, fmt: str, out_dir: Path, seed: int) -> dict:
         "owner_email", "valid_from", "valid_to", "is_active"])
     cost_centers.loc[1, ["valid_to", "is_active"]] = ["2024-09-30", False]
     cost_centers.loc[9, ["valid_to", "is_active"]] = ["2025-06-30", False]
+    cost_centers["created_at"] = cost_centers["valid_from"] + " 08:00:00"
+    cost_centers["updated_at"] = np.where(
+        cost_centers["valid_to"].notna(), cost_centers["valid_to"] + " 17:00:00", cost_centers["created_at"]
+    )
     emit("erp_cost_centers", cost_centers)
 
     gl_accounts = pd.DataFrame([
@@ -326,6 +332,8 @@ def generate(scale: float, fmt: str, out_dir: Path, seed: int) -> dict:
         ("5000", "Cost of Goods Sold", "EXPENSE", True),
         ("9999", "Suspense", "CLEARING", False),
     ], columns=["gl_account", "gl_name", "account_type", "is_postable"])
+    gl_accounts["created_at"] = "2022-01-03 08:00:00"
+    gl_accounts["updated_at"] = "2022-01-03 08:00:00"
     emit("erp_gl_accounts", gl_accounts)
 
     # -- FX: banking days only, no identity pair, correlated random walk ---
@@ -341,6 +349,8 @@ def generate(scale: float, fmt: str, out_dir: Path, seed: int) -> dict:
             "loaded_at": np.char.add(d2s(bank_days), " 04:15:00"),
         }))
     fx = pd.concat(fx_frames, ignore_index=True)
+    fx["created_at"] = fx["loaded_at"]
+    fx["updated_at"] = fx["loaded_at"]
     emit("erp_fx_rates", fx)
 
     # lookup used internally: rate carried forward to the last banking day
@@ -989,6 +999,7 @@ def generate(scale: float, fmt: str, out_dir: Path, seed: int) -> dict:
         "amount_company": fmt_money(amt_comp, p_comp_ccy),
         "reverses_posting_id": pd.array([pd.NA] * n_inv, dtype="Int64"),
         "posted_at": ts2s(posted_ts),
+        "created_at": ts2s(posted_ts),
     })
 
     # credit notes reverse a slice of invoices, usually in a later period
@@ -1015,6 +1026,7 @@ def generate(scale: float, fmt: str, out_dir: Path, seed: int) -> dict:
         "amount_company": fmt_money(-amt_comp[crn_sel], p_comp_ccy[crn_sel]),
         "reverses_posting_id": pd.array((crn_sel + 1).astype(np.int64), dtype="Int64"),
         "posted_at": ts2s(crn_posted),
+        "created_at": ts2s(crn_posted),
     })
 
     # period-level adjustments: no order, no cost centre
@@ -1042,6 +1054,7 @@ def generate(scale: float, fmt: str, out_dir: Path, seed: int) -> dict:
                 "company_currency": ccy, "amount_company": float(amt),
                 "reverses_posting_id": pd.NA,
                 "posted_at": str(pd.Timestamp(pend).date() + timedelta(days=2)) + " 09:30:00",
+                "created_at": str(pd.Timestamp(pend).date() + timedelta(days=2)) + " 09:30:00",
             })
     adj = pd.DataFrame(adj_rows)
     if len(adj):

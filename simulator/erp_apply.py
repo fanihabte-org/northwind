@@ -88,8 +88,8 @@ class ErpEventApplier:
             INSERT INTO erp.revenue_postings (
                 posting_id, document_number, document_type, company_code, order_ref, gl_account,
                 cost_center_code, posting_date, fiscal_period, document_currency, amount_doc,
-                company_currency, amount_company, reverses_posting_id, posted_at
-            ) VALUES (%s, %s, 'INV', %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NULL, %s)
+                company_currency, amount_company, reverses_posting_id, posted_at, created_at
+            ) VALUES (%s, %s, 'INV', %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NULL, %s, %s)
             """,
             [
                 posting_id,
@@ -104,6 +104,7 @@ class ErpEventApplier:
                 amount_doc,
                 company_currency,
                 amount_company,
+                f"{event.business_date.isoformat()} 08:00:00",
                 f"{event.business_date.isoformat()} 08:00:00",
             ],
         )

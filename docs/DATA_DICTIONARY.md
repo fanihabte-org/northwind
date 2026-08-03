@@ -352,6 +352,7 @@ billing; this is the durable Ops hand-off to ERP, not an ERP ledger entry.
 | `company_name` | VARCHAR(120) | no | Registered name. |
 | `functional_currency` | CHAR(3) | no | The currency this entity keeps its books in. |
 | `country` | VARCHAR(60) | no | Country of incorporation. |
+| `created_at` / `updated_at` | TIMESTAMP | no | ERP master-record audit timestamps, not incorporation or legal-entity effective dates. |
 
 ---
 
@@ -369,6 +370,8 @@ billing; this is the durable Ops hand-off to ERP, not an ERP ledger entry.
 | `valid_from` | DATE | no | Date the centre opened. Some open partway through the window. |
 | `valid_to` | DATE | yes | Date it closed. `NULL` while open. |
 | `is_active` | BOOLEAN | no | Current status. A retired centre keeps all of its historical postings. |
+| `created_at` | TIMESTAMP | no | When the ERP master record was created; generated history aligns this with `valid_from`. |
+| `updated_at` | TIMESTAMP | no | Last master-record update. A retirement advances this timestamp but does not change earlier postings. |
 
 Validity is a range, not a flag: a centre is the correct attribution for a posting when
 `valid_from <= posting_date < COALESCE(valid_to, 'infinity')`.
@@ -384,6 +387,7 @@ Validity is a range, not a flag: a centre is the correct attribution for a posti
 | `gl_name` | VARCHAR(120) | no | Account description. |
 | `account_type` | VARCHAR(20) | no | `REVENUE` · `ASSET` · `LIABILITY` · `EXPENSE` · `CLEARING`. |
 | `is_postable` | BOOLEAN | no | Whether postings are permitted. |
+| `created_at` / `updated_at` | TIMESTAMP | no | Chart-of-accounts master-record audit timestamps. |
 
 Revenue sits in the 4000 series: `4000` product, `4010` licence, `4020` services,
 `4030` support, `4090` adjustments.
@@ -402,6 +406,7 @@ Revenue sits in the 4000 series: `4000` product, `4010` licence, `4020` services
 | `rate` | NUMERIC(18,8) | no | Multiply an amount in `from_currency` by this to get USD. |
 | `source_system` | VARCHAR(30) | no | Feed identifier. |
 | `loaded_at` | TIMESTAMP | no | When the rate arrived. |
+| `created_at` / `updated_at` | TIMESTAMP | no | Source-record audit timestamps. For an immutable feed observation both initially equal `loaded_at`. |
 
 Two conventions of this feed, both standard in the industry and both consequential:
 
@@ -434,6 +439,7 @@ The revenue ledger. This is Finance's number, and it is the one that gets report
 | `amount_company` | NUMERIC(18,2) | no | The same amount restated into the entity's functional currency. |
 | `reverses_posting_id` | BIGINT | yes | Self-referencing FK. Set on `CRN` rows and only on `CRN` rows; points at the invoice being reversed, which is frequently in an earlier period. |
 | `posted_at` | TIMESTAMP | no | When the document **hit the ledger**. Always ≥ `posting_date`, and the gap is not constant — month-end close and backdated corrections both widen it. |
+| `created_at` | TIMESTAMP | no | When this immutable journal entry was recorded. For generated and simulated entries it equals `posted_at`. There is intentionally no `updated_at`: corrections create new `CRN` or `ADJ` rows rather than changing a posted entry. |
 
 **Two currencies per row is deliberate.** A German entity books EUR for a customer who
 transacted in USD. `amount_doc` and `amount_company` describe the same money on two
@@ -626,6 +632,11 @@ regression on distance, weight, service level and carrier.
   absent business event or a deletion. After the completed backfill has been
   validated, migration `004_enforce_audit_metadata.sql` makes these fields
   mandatory and rejects any `updated_at` earlier than `created_at`.
+- **ERP audit rollout.** ERP migration `002_add_audit_metadata.sql` follows the
+  same non-rewriting introduction for ERP masters and FX rates. Revenue postings
+  are append-only accounting entries: `created_at` records their insertion while
+  the existing `posted_at` retains its financial meaning; corrections must be
+  separate `CRN` or `ADJ` rows, not in-place updates.
 - **Money is in the currency named beside it.** `ops` amounts are in
   `orders.currency_code`; `erp` carries both bases explicitly. Nothing is pre-converted
   to USD except `unit_cost_usd`, `freight_cost_usd`, `list_price_usd` and

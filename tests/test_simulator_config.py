@@ -19,6 +19,7 @@ def test_simulator_duckdb_settings_derive_spill_directory_from_state() -> None:
     assert settings.temp_directory == Path("/var/northwind/state/simulator-spill")
     assert settings.max_temp_size == "12GB"
     assert settings.duckdb_config()["threads"] == "2"
+    assert settings.duckdb_config()["preserve_insertion_order"] == "false"
 
 
 def test_simulator_duckdb_settings_reject_non_positive_threads() -> None:

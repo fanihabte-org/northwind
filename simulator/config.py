@@ -54,4 +54,7 @@ class SimulatorDuckDBSettings:
             "temp_directory": str(self.temp_directory),
             "max_temp_directory_size": self.max_temp_size,
             "threads": str(self.threads),
+            # Ordering guarantees consume memory and are unnecessary for the
+            # deterministic SQL ordering used by the simulator itself.
+            "preserve_insertion_order": "false",
         }

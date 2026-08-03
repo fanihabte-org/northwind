@@ -105,13 +105,38 @@ class CrmSnapshotReader:
         return [dict(zip(columns, row, strict=True)) for row in cursor.fetchall()]
 
     def _relation(self, base_path: Path, object_name: str) -> str:
-        paths = [base_path]
+        """Return the latest view without windowing the full base data set.
+
+        The immutable seed already has one row per Id. Only daily delta files
+        can contain competing versions, so rank that bounded data and exclude
+        overridden base rows with an anti-join. The former implementation
+        ranked the base plus every delta, which could create a large DuckDB
+        window working set during high-scale catch-up.
+        """
+        delta_paths: list[Path] = []
         if self.delta_root is not None:
-            paths.extend(sorted((self.delta_root / object_name).glob("**/*.parquet")))
-        literals = ", ".join("'" + str(path).replace("'", "''") + "'" for path in paths)
-        reader = f"read_parquet([{literals}], union_by_name = true)"
-        return (
-            "(SELECT * EXCLUDE (__sim_version_rank) FROM ("
-            f"SELECT *, row_number() OVER (PARTITION BY \"Id\" ORDER BY \"LastModifiedDate\" DESC) "
-            f"AS __sim_version_rank FROM {reader}) WHERE __sim_version_rank = 1)"
+            delta_paths = sorted((self.delta_root / object_name).glob("**/*.parquet"))
+        base_reader = f"read_parquet({self._quote(base_path)})"
+        if not delta_paths:
+            return base_reader
+        literals = ", ".join(self._quote(path) for path in delta_paths)
+        # Delta files live in business_date=... directories. Do not expose that
+        # storage partition as a CRM column when unioning with the base file.
+        delta_reader = (
+            f"read_parquet([{literals}], union_by_name = true, hive_partitioning = false)"
         )
+        return (
+            "(WITH latest_delta AS ("
+            "SELECT * EXCLUDE (__sim_version_rank) FROM ("
+            f"SELECT *, row_number() OVER (PARTITION BY \"Id\" ORDER BY \"LastModifiedDate\" DESC) "
+            f"AS __sim_version_rank FROM {delta_reader}) WHERE __sim_version_rank = 1"
+            ") "
+            f"SELECT base.* FROM {base_reader} AS base "
+            "WHERE NOT EXISTS (SELECT 1 FROM latest_delta AS delta "
+            "WHERE delta.\"Id\" = base.\"Id\") "
+            "UNION ALL SELECT * FROM latest_delta)"
+        )
+
+    @staticmethod
+    def _quote(path: Path) -> str:
+        return "'" + str(path).replace("'", "''") + "'"

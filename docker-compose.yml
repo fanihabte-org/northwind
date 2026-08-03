@@ -126,7 +126,7 @@ services:
     build:
       context: .
       dockerfile: simulator/Dockerfile
-    restart: on-failure:5
+    restart: unless-stopped
     depends_on:
       ops:
         condition: service_healthy
@@ -143,6 +143,8 @@ services:
       SIMULATION_BASELINE_DATE: "${SIMULATION_BASELINE_DATE:-}"
       SIMULATION_SEED: "${SIMULATION_SEED:-42}"
       SIMULATION_BOOTSTRAP_RETRY_SECONDS: "${SIMULATION_BOOTSTRAP_RETRY_SECONDS:-60}"
+      SIMULATION_RETRY_INITIAL_SECONDS: "${SIMULATION_RETRY_INITIAL_SECONDS:-60}"
+      SIMULATION_RETRY_MAX_SECONDS: "${SIMULATION_RETRY_MAX_SECONDS:-3600}"
       # CRM snapshot scans must stay below the Docker Desktop memory budget.
       # DuckDB spills sort/window intermediates to this durable state mount.
       SIMULATION_DUCKDB_MEMORY_LIMIT: "${SIMULATION_DUCKDB_MEMORY_LIMIT:-512MB}"

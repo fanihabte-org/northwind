@@ -57,6 +57,11 @@ snapshot DuckDB connection is limited to `SIMULATION_DUCKDB_MEMORY_LIMIT` (512MB
 default), uses one worker, and spills intermediates to `state/simulator-spill` up to
 `SIMULATION_DUCKDB_MAX_TEMP_SIZE` (20GB by default).
 
+If an individual daily run fails—for example while a source database is briefly
+unavailable—the daemon logs the error and retries in 60 seconds, then backs off up
+to one hour. Configure `SIMULATION_RETRY_INITIAL_SECONDS` and
+`SIMULATION_RETRY_MAX_SECONDS` in `.env` if needed; completed days are never rerun.
+
 For a self-hosted deployment, configure `FAKEFORCE_EXPORTS_DIR` in `.env` before
 starting Compose. Bulk Query CSV artifacts will be stored there rather than in the
 repository. See [`docs/SELF_HOSTED_DEPLOYMENT.md`](docs/SELF_HOSTED_DEPLOYMENT.md).

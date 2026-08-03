@@ -236,4 +236,4 @@ Every knob has an environment variable (`FAKEFORCE_ERROR_RATE`, `FAKEFORCE_PAGE_
 and `COPY … FROM STDIN` becomes `COPY … FROM 's3://…' IAM_ROLE …`. Redshift does not
 enforce primary or foreign keys — it accepts the declarations and uses them for query
 planning only — so if you load there, the constraint guarantees described above no
-longer hold and validating them becomes your job.
+longer hold and validating them becomes your  job.

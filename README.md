@@ -43,6 +43,12 @@ runs reject a different baseline. Set `SIMULATION_SEED`, `OPS_PG_DSN`,
 not fit your deployment. `--through YYYY-MM-DD` is useful for controlled catch-up
 and tests.
 
+The Compose simulator runs its catch-up once when it starts, then sleeps until the
+next midnight in `America/Los_Angeles`; it does not poll every second. Its CRM
+snapshot DuckDB connection is limited to `SIMULATION_DUCKDB_MEMORY_LIMIT` (512MB by
+default), uses one worker, and spills intermediates to `state/simulator-spill` up to
+`SIMULATION_DUCKDB_MAX_TEMP_SIZE` (20GB by default).
+
 For a self-hosted deployment, configure `FAKEFORCE_EXPORTS_DIR` in `.env` before
 starting Compose. Bulk Query CSV artifacts will be stored there rather than in the
 repository. See [`docs/SELF_HOSTED_DEPLOYMENT.md`](docs/SELF_HOSTED_DEPLOYMENT.md).

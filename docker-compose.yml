@@ -25,8 +25,8 @@ services:
       POSTGRES_PASSWORD: ops
       POSTGRES_DB: ops
     command: >
-      postgres -c shared_buffers=512MB -c work_mem=64MB
-               -c maintenance_work_mem=512MB -c max_wal_size=4GB
+      postgres -c shared_buffers=128MB -c work_mem=16MB
+               -c maintenance_work_mem=128MB -c max_wal_size=1GB
     ports: ["5433:5432"]
     volumes: ["northwind_ops:/var/lib/postgresql/data"]
     healthcheck:
@@ -41,8 +41,8 @@ services:
       POSTGRES_PASSWORD: erp
       POSTGRES_DB: erp
     command: >
-      postgres -c shared_buffers=512MB -c work_mem=64MB
-               -c maintenance_work_mem=512MB -c max_wal_size=4GB
+      postgres -c shared_buffers=128MB -c work_mem=16MB
+               -c maintenance_work_mem=128MB -c max_wal_size=1GB
     ports: ["5434:5432"]
     volumes: ["northwind_erp:/var/lib/postgresql/data"]
     healthcheck:
@@ -57,8 +57,8 @@ services:
       POSTGRES_PASSWORD: analytics
       POSTGRES_DB: analytics
     command: >
-      postgres -c shared_buffers=512MB -c work_mem=64MB
-               -c maintenance_work_mem=512MB -c max_wal_size=4GB
+      postgres -c shared_buffers=128MB -c work_mem=16MB
+               -c maintenance_work_mem=128MB -c max_wal_size=1GB
     ports: ["5435:5432"]
     volumes: ["northwind_analytics:/var/lib/postgresql/data"]
     healthcheck:
@@ -127,6 +127,12 @@ services:
       TZ: America/Los_Angeles
       SIMULATION_BASELINE_DATE: "${SIMULATION_BASELINE_DATE:-}"
       SIMULATION_SEED: "${SIMULATION_SEED:-42}"
+      # CRM snapshot scans must stay below the Docker Desktop memory budget.
+      # DuckDB spills sort/window intermediates to this durable state mount.
+      SIMULATION_DUCKDB_MEMORY_LIMIT: "${SIMULATION_DUCKDB_MEMORY_LIMIT:-512MB}"
+      SIMULATION_DUCKDB_TEMP_DIRECTORY: /app/state/simulator-spill
+      SIMULATION_DUCKDB_MAX_TEMP_SIZE: "${SIMULATION_DUCKDB_MAX_TEMP_SIZE:-20GB}"
+      SIMULATION_DUCKDB_THREADS: "${SIMULATION_DUCKDB_THREADS:-1}"
       FAKEFORCE_SEED_DIR: /app/seed
       FAKEFORCE_STATE_DIR: /app/state
       OPS_PG_DSN: postgresql://ops:ops@ops:5432/ops

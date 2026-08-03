@@ -6,17 +6,24 @@ from pathlib import Path
 
 import duckdb
 
+from simulator.config import SimulatorDuckDBSettings
 from simulator.crm import CrmSnapshot, OPEN_STAGES
 from simulator.policy import SimulationPolicy
 
 
 class CrmSnapshotReader:
-    def __init__(self, policy: SimulationPolicy, delta_root: Path | None = None) -> None:
+    def __init__(
+        self,
+        policy: SimulationPolicy,
+        delta_root: Path | None = None,
+        duckdb_settings: SimulatorDuckDBSettings | None = None,
+    ) -> None:
         self.policy = policy
         self.delta_root = delta_root
+        self.duckdb_settings = duckdb_settings
 
     def read(self, accounts_path: Path, opportunities_path: Path, seed: int) -> CrmSnapshot:
-        with duckdb.connect() as conn:
+        with self._connect() as conn:
             accounts_relation = self._relation(accounts_path, "accounts")
             opportunities_relation = self._relation(opportunities_path, "opportunities")
             account_population, account_next_sequence = self._population_and_next_id(
@@ -61,6 +68,12 @@ class CrmSnapshotReader:
             opportunity_next_sequence=opportunity_next_sequence,
             owner_ids=tuple(row["OwnerId"] for row in owners),
         )
+
+    def _connect(self) -> duckdb.DuckDBPyConnection:
+        if self.duckdb_settings is None:
+            return duckdb.connect()
+        self.duckdb_settings.temp_directory.mkdir(parents=True, exist_ok=True)
+        return duckdb.connect(config=self.duckdb_settings.duckdb_config())
 
     @staticmethod
     def _population_and_next_id(conn: duckdb.DuckDBPyConnection, relation: str) -> tuple[int, int]:

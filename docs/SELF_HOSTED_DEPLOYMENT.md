@@ -26,6 +26,12 @@ then ERP for each missing date. It shares `state/simulation/` with FakeForce so 
 Parquet deltas become visible through the API without copying them into the Git
 checkout.
 
+Its DuckDB CRM snapshot connection is independently bounded: by default it uses
+at most `512MB`, one execution thread, and `state/simulator-spill/` for up to `20GB`
+of temporary spill data. Set `SIMULATION_DUCKDB_MEMORY_LIMIT`,
+`SIMULATION_DUCKDB_MAX_TEMP_SIZE`, or `SIMULATION_DUCKDB_THREADS` in `.env` only
+when the Docker Desktop memory and disk budget permits it.
+
 Set `SIMULATION_BASELINE_DATE` in `.env` to the day immediately before the first
 incremental business date. This value is recorded on first start and cannot safely
 be changed afterwards. Check the service with:

@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any, Protocol, Sequence
 from zoneinfo import ZoneInfo
 
+from simulator.config import SimulatorDuckDBSettings
 from simulator.crm import CrmDailyPlanner
 from simulator.crm_run import CrmRun
 from simulator.crm_snapshot import CrmSnapshotReader
@@ -69,10 +70,11 @@ def build_runner(
 
     delta_root = state_directory / "simulation" / "crm"
     state = SimulationStateStore(state_directory / "simulation" / "simulation.duckdb", policy)
+    duckdb_settings = SimulatorDuckDBSettings.from_env(state_directory)
     crm = CrmRun(
         state,
         CrmDailyPlanner(policy),
-        CrmSnapshotReader(policy, delta_root),
+        CrmSnapshotReader(policy, delta_root, duckdb_settings),
         CrmDeltaPublisher(
             delta_root,
             {

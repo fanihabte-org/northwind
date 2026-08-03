@@ -32,3 +32,5 @@ def test_compose_uses_distinct_ops_and_erp_databases() -> None:
     assert 'ports: ["5434:5432"]' in compose
     assert "  simulator:\n" in compose
     assert "SIMULATION_BASELINE_DATE" in compose
+    assert "SIMULATION_DUCKDB_MEMORY_LIMIT" in compose
+    assert "shared_buffers=128MB" in compose

@@ -74,8 +74,9 @@ python generator/load.py
 ```
 
 The simulator service waits for both database baselines and the CRM Parquet files
-before it initializes or advances simulation state. This prevents a clean deployment
-from failing while the one-time load is still in progress.
+before it initializes or advances simulation state. The `ops.invoices` table can
+be empty because the daily simulator creates invoices. This prevents a clean
+deployment from failing while the one-time load is still in progress.
 
 ## GitHub Actions deployment
 

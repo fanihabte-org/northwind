@@ -2,7 +2,12 @@ from pathlib import Path
 
 import pandas as pd
 
-from simulator.bootstrap import ERP_TABLES, OPS_TABLES, SourceBootstrapProbe, wait_for_source_bootstrap
+from simulator.bootstrap import (
+    ERP_TABLES,
+    OPS_TABLES,
+    SourceBootstrapProbe,
+    wait_for_source_bootstrap,
+)
 
 
 class Cursor:
@@ -51,6 +56,16 @@ def test_bootstrap_probe_requires_seed_and_populated_source_tables(tmp_path: Pat
 
     assert report.ready
     assert ops.closed and erp.closed
+
+
+def test_bootstrap_probe_allows_empty_invoice_table_in_generated_baseline(tmp_path: Path) -> None:
+    _seed(tmp_path)
+    ops = Connection(set(OPS_TABLES), set(OPS_TABLES) - {"invoices"})
+    erp = Connection(set(ERP_TABLES), set(ERP_TABLES))
+
+    report = SourceBootstrapProbe(tmp_path, lambda: ops, lambda: erp).check()
+
+    assert report.ready
 
 
 def test_bootstrap_probe_reports_missing_or_empty_prerequisites(tmp_path: Path) -> None:

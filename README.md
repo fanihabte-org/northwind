@@ -27,8 +27,9 @@ python generator/load.py              # loads separate Ops and ERP databases
 ```
 
 On a new Docker deployment, the simulator waits safely for the CRM Parquet seed
-and all required Ops/ERP baseline tables to contain rows. It logs the missing
-prerequisites every 60 seconds (configurable with
+and the required Ops/ERP baseline reference and transaction tables to contain
+rows. The empty `ops.invoices` table is valid: invoices start being created by
+the daily simulator. It logs missing prerequisites every 60 seconds (configurable with
 `SIMULATION_BOOTSTRAP_RETRY_SECONDS`) instead of crashing. Run
 `generator/load.py` once; do not rerun it on an initialized database.
 

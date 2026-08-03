@@ -22,6 +22,10 @@ OPS_TABLES = (
 )
 ERP_TABLES = ("companies", "cost_centers", "gl_accounts", "fx_rates", "revenue_postings")
 CRM_SEED_FILES = ("crm_accounts.parquet", "crm_opportunities.parquet")
+# Invoices are intentionally not part of the generated baseline.  They begin
+# empty and are created as an order progresses through the daily simulation.
+OPS_POPULATED_TABLES = tuple(table for table in OPS_TABLES if table != "invoices")
+ERP_POPULATED_TABLES = ERP_TABLES
 
 
 @dataclass(frozen=True)
@@ -67,8 +71,16 @@ class SourceBootstrapProbe:
 
     def check(self) -> BootstrapReport:
         problems = self._crm_seed_problems()
-        problems.extend(self._database_problems("Ops", "ops", OPS_TABLES, self.ops_connection_factory))
-        problems.extend(self._database_problems("ERP", "erp", ERP_TABLES, self.erp_connection_factory))
+        problems.extend(
+            self._database_problems(
+                "Ops", "ops", OPS_TABLES, OPS_POPULATED_TABLES, self.ops_connection_factory
+            )
+        )
+        problems.extend(
+            self._database_problems(
+                "ERP", "erp", ERP_TABLES, ERP_POPULATED_TABLES, self.erp_connection_factory
+            )
+        )
         return BootstrapReport(ready=not problems, problems=tuple(problems))
 
     def _crm_seed_problems(self) -> list[str]:
@@ -94,6 +106,7 @@ class SourceBootstrapProbe:
         label: str,
         schema: str,
         required_tables: tuple[str, ...],
+        populated_tables: tuple[str, ...],
         connection_factory: Callable[[], Any],
     ) -> list[str]:
         connection = None
@@ -112,7 +125,7 @@ class SourceBootstrapProbe:
             if missing:
                 return [f"{label} baseline tables are missing: {', '.join(missing)}"]
             empty: list[str] = []
-            for table in required_tables:
+            for table in populated_tables:
                 cursor.execute(f"SELECT 1 FROM {schema}.{table} LIMIT 1")
                 if cursor.fetchone() is None:
                     empty.append(table)

@@ -248,6 +248,12 @@ number of seconds in `Retry-After` before retrying the same request or locator.
 Use `python -m simulator.status --state-directory state` to inspect the durable
 simulation baseline, completion watermark, and any incomplete daily run.
 
+Use `docker compose run --rm migrations python -m generator.source_status` to
+inspect both source databases without expensive full-table scans. It reports the
+applied migration version, approximate table growth and storage, most recent
+simulated event, and durable audit-backfill checkpoints. Add `--system ops` or
+`--system erp` to inspect one source only.
+
 Ops audit-field backfill is deliberately separate from deploy and the daily
 simulator. After migration `003_add_audit_backfill_state.sql` is applied, inspect
 progress with `python -m generator.audit_backfill --status`. Run a bounded unit

@@ -38,7 +38,8 @@ SIMULATION_BASELINE_DATE=2026-07-24 python -m simulator.scheduler
 
 Use the date immediately before the first incremental business date as the
 baseline. The first run records it in `state/simulation/simulation.duckdb`; later
-runs reject a different baseline. Set `SIMULATION_SEED`, `OPS_PG_DSN`,
+runs reject a different baseline while retaining a separate, advancing completion
+watermark for restart and catch-up. Set `SIMULATION_SEED`, `OPS_PG_DSN`,
 `ERP_PG_DSN`, `FAKEFORCE_STATE_DIR`, and `FAKEFORCE_SEED_DIR` when the defaults do
 not fit your deployment. `--through YYYY-MM-DD` is useful for controlled catch-up
 and tests.

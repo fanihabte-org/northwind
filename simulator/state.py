@@ -16,6 +16,8 @@ from simulator.events import SourceEvent
 
 SourceSystem = Literal["crm", "ops", "erp"]
 SOURCES: tuple[SourceSystem, ...] = ("crm", "ops", "erp")
+BASELINE_DATE_KEY = "baseline_completed_date"
+LAST_COMPLETED_DATE_KEY = "last_completed_date"
 
 
 class SimulationStateError(RuntimeError):
@@ -82,23 +84,43 @@ class SimulationStateStore:
                 );
                 """
             )
-            existing = conn.execute(
-                "SELECT value FROM simulation_metadata WHERE key = 'last_completed_date'"
+            baseline = conn.execute(
+                "SELECT value FROM simulation_metadata WHERE key = ?", [BASELINE_DATE_KEY]
             ).fetchone()
-            if existing is None:
+            watermark = conn.execute(
+                "SELECT value FROM simulation_metadata WHERE key = ?", [LAST_COMPLETED_DATE_KEY]
+            ).fetchone()
+            if watermark is None:
                 conn.execute(
-                    "INSERT INTO simulation_metadata VALUES ('last_completed_date', ?)",
-                    [baseline_completed_date.isoformat()],
+                    "INSERT INTO simulation_metadata VALUES (?, ?)",
+                    [LAST_COMPLETED_DATE_KEY, baseline_completed_date.isoformat()],
                 )
-            elif existing[0] != baseline_completed_date.isoformat():
+            if baseline is None:
+                # Pre-v2 state stored only the mutable completion watermark.  On
+                # its first upgraded startup, retain that watermark and bind the
+                # configured immutable baseline for all future restarts.
+                conn.execute(
+                    "INSERT INTO simulation_metadata VALUES (?, ?)",
+                    [BASELINE_DATE_KEY, baseline_completed_date.isoformat()],
+                )
+            elif baseline[0] != baseline_completed_date.isoformat():
                 raise SimulationStateError(
                     "simulation state already belongs to a different baseline date"
                 )
 
+    def baseline_completed_date(self) -> date:
+        with self.connection() as conn:
+            row = conn.execute(
+                "SELECT value FROM simulation_metadata WHERE key = ?", [BASELINE_DATE_KEY]
+            ).fetchone()
+        if row is None:
+            raise SimulationStateError("simulation state has not been initialized")
+        return date.fromisoformat(row[0])
+
     def last_completed_date(self) -> date:
         with self.connection() as conn:
             row = conn.execute(
-                "SELECT value FROM simulation_metadata WHERE key = 'last_completed_date'"
+                "SELECT value FROM simulation_metadata WHERE key = ?", [LAST_COMPLETED_DATE_KEY]
             ).fetchone()
         if row is None:
             raise SimulationStateError("simulation state has not been initialized")
@@ -115,7 +137,7 @@ class SimulationStateStore:
         with self.connection() as conn:
             last_completed = date.fromisoformat(
                 conn.execute(
-                    "SELECT value FROM simulation_metadata WHERE key = 'last_completed_date'"
+                    "SELECT value FROM simulation_metadata WHERE key = ?", [LAST_COMPLETED_DATE_KEY]
                 ).fetchone()[0]
             )
             if run_date > last_completed.fromordinal(last_completed.toordinal() + 1):
@@ -178,7 +200,7 @@ class SimulationStateStore:
         with self.connection() as conn:
             last_completed = date.fromisoformat(
                 conn.execute(
-                    "SELECT value FROM simulation_metadata WHERE key = 'last_completed_date'"
+                    "SELECT value FROM simulation_metadata WHERE key = ?", [LAST_COMPLETED_DATE_KEY]
                 ).fetchone()[0]
             )
             if run_date != date.fromordinal(last_completed.toordinal() + 1):
@@ -194,8 +216,8 @@ class SimulationStateStore:
                 [run_date],
             )
             conn.execute(
-                "UPDATE simulation_metadata SET value = ? WHERE key = 'last_completed_date'",
-                [run_date.isoformat()],
+                "UPDATE simulation_metadata SET value = ? WHERE key = ?",
+                [run_date.isoformat(), LAST_COMPLETED_DATE_KEY],
             )
 
     def source_run_state(self, run_date: date, source: SourceSystem) -> str:

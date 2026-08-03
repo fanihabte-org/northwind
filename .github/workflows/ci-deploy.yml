@@ -42,7 +42,7 @@ jobs:
     name: Deploy Northwind
     needs: test
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    runs-on: [self-hosted, self-hosted-macbook]
+    runs-on: [self-hosted, macOS, X64]
     environment: production
     steps:
       - name: Update trusted checkout and restart services

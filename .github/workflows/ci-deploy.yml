@@ -51,8 +51,8 @@ jobs:
           EXPECTED_SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
-          : "${DEPLOY_DIR:?Set the DATAFORGE_DEPLOY_DIR repository variable}"
-          : "${FAKEFORCE_EXPORTS_DIR:?Set the DATAFORGE_EXPORTS_DIR repository variable}"
+          : "${DEPLOY_DIR:?Set the NORTHWIND_DEPLOY_DIR repository variable}"
+          : "${FAKEFORCE_EXPORTS_DIR:?Set the NORTHWIND_EXPORTS_DIR repository variable}"
           test -d "$DEPLOY_DIR/.git"
           git -C "$DEPLOY_DIR" diff --quiet
           git -C "$DEPLOY_DIR" diff --cached --quiet

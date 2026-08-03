@@ -36,12 +36,14 @@ class ErpRun:
         applier: ErpEventApplier,
         ops_connection_factory: Callable[[], Connection],
         erp_connection_factory: Callable[[], Connection],
+        reconcile: Callable[[date], Any] | None = None,
     ) -> None:
         self.state = state
         self.planner = planner
         self.applier = applier
         self.ops_connection_factory = ops_connection_factory
         self.erp_connection_factory = erp_connection_factory
+        self.reconcile = reconcile
 
     def run(self, run_date: date, seed: int) -> ErpRunResult:
         self.state.claim_run(run_date, seed)
@@ -73,6 +75,8 @@ class ErpRun:
 
         applied = self._apply(events)
         self.state.mark_source_applied(run_date, "erp", len(events), applied)
+        if self.reconcile is not None:
+            self.reconcile(run_date)
         self.state.complete_run(run_date)
         return ErpRunResult(run_date, len(events), applied)
 

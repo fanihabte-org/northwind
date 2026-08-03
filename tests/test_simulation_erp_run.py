@@ -59,6 +59,10 @@ def test_erp_run_reads_ops_then_posts_and_completes_day(tmp_path) -> None:
     snapshot = Connection(one_rows=[(900,)], many_rows=[[], [("US01", "USD")]])
     apply = Connection(one_rows=[None, None, ("USD",), ("4000",), ("CC-US001",)])
     erp_connections = iter([snapshot, apply])
+    reconciled_before_completion = []
+
+    def reconcile(day):
+        reconciled_before_completion.append((day, store.last_completed_date()))
 
     result = ErpRun(
         store,
@@ -66,9 +70,11 @@ def test_erp_run_reads_ops_then_posts_and_completes_day(tmp_path) -> None:
         ErpEventApplier(),
         lambda: ops,
         lambda: next(erp_connections),
+        reconcile,
     ).run(run_date, seed=1)
 
     assert result.records == result.applied == 1
     assert store.last_completed_date() == run_date
+    assert reconciled_before_completion == [(run_date, run_date - timedelta(days=1))]
     assert apply.committed
     assert ops.closed and snapshot.closed and apply.closed

@@ -24,6 +24,7 @@ from simulator.ops import OpsDailyPlanner
 from simulator.ops_apply import OpsEventApplier
 from simulator.ops_run import OpsRun
 from simulator.policy import SimulationPolicy
+from simulator.reconciliation import DailySourceReconciler
 from simulator.state import SimulationStateError, SimulationStateStore
 
 
@@ -87,6 +88,7 @@ def build_runner(
         seed_directory / "crm_opportunities.parquet",
     )
     ops_factory = connection_factory(ops_dsn)
+    erp_factory = connection_factory(erp_dsn)
     ops = OpsRun(
         state,
         OpsDailyPlanner(policy),
@@ -94,7 +96,15 @@ def build_runner(
         OpsEventApplier(),
         ops_factory,
     )
-    erp = ErpRun(state, ErpDailyPlanner(policy), ErpEventApplier(), ops_factory, connection_factory(erp_dsn))
+    reconciler = DailySourceReconciler(state, ops_factory, erp_factory)
+    erp = ErpRun(
+        state,
+        ErpDailyPlanner(policy),
+        ErpEventApplier(),
+        ops_factory,
+        erp_factory,
+        reconciler.reconcile,
+    )
     return DailySimulationRunner(state, crm, ops, erp)
 
 

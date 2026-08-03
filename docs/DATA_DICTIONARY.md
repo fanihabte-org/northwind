@@ -46,7 +46,7 @@ data. They are visible only as changes in the numbers, which is the point.
 ### Database ownership and constraints
 
 Ops and ERP are separate PostgreSQL databases in the same Compose stack. Their DDL
-lives in `sql/01_ops.sql` and `sql/02_erp.sql`, respectively. Each database enforces
+lives in `sql/migrations/ops/` and `sql/migrations/erp/`, respectively. Each database enforces
 its own primary keys, unique constraints, check constraints, foreign keys, and
 indexes. A constraint never crosses a source-system boundary: CRM, Ops, and ERP
 references across systems are deliberately business keys for the data warehouse to
@@ -57,6 +57,11 @@ is the deterministic simulation event ID, so a restarted daily run can safely
 retry an already-applied source event without creating a duplicate order or
 Finance posting. The ledgers are intentionally local to their respective source
 databases and never create a cross-system constraint.
+
+Before a simulated business date is marked complete, a bounded reconciliation
+checks that each newly planned Ops and ERP event has both its local retry marker
+and its expected order, shipment, invoice, or revenue-posting record. A mismatch
+leaves the date incomplete so the normal replay path can recover it.
 
 ---
 

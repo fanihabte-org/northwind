@@ -109,6 +109,10 @@ dataset byte for byte, so your tests and models stay comparable across runs.
 size, several times faster to write and read, and preserves types and nulls exactly —
 prefer it unless you specifically want to eyeball raw text.
 
+For warehouse planning, run `python -m generator.profile` after generation. It writes
+an ignored `seed/_profile.json` with disk size, row counts, null counts, approximate
+cardinalities, and date-partition recommendations using bounded DuckDB scans.
+
 ---
 
 ## What is here

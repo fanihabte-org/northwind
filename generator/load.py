@@ -35,7 +35,7 @@ except ImportError:
     sys.exit("pip install 'psycopg[binary]' first")
 
 ROOT = Path(__file__).resolve().parents[1]
-SEED = ROOT / "seed"
+SEED = Path(os.getenv("NORTHWIND_SEED_DIR", ROOT / "seed"))
 
 OPS_DSN = os.getenv("OPS_PG_DSN", "postgresql://ops:ops@localhost:5433/ops")
 ERP_DSN = os.getenv("ERP_PG_DSN", "postgresql://erp:erp@localhost:5434/erp")

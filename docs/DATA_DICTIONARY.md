@@ -207,6 +207,7 @@ account number.
 | `launch_date` | DATE | no | First sellable date. Roughly half the catalogue predates the window; the rest launches during it. |
 | `is_discontinued` | BOOLEAN | no | Current status flag. |
 | `discontinued_on` | DATE | yes | Set when and only when `is_discontinued`. Support renewals and open orders continue past this date. |
+| `created_at` | TIMESTAMP | no | Catalogue-record creation time. For generated products this is the initial catalogue publication timestamp on `launch_date`. |
 | `updated_at` | TIMESTAMP | no | Last catalogue change. |
 
 ---
@@ -245,6 +246,7 @@ account number.
 | `discount_pct` | NUMERIC(5,2) | no | Line discount. Derived from the header discount with line-level variation. |
 | `line_amount` | NUMERIC(18,2) | no | `quantity × unit_price × (1 - discount_pct/100)`, in document currency. |
 | `unit_cost_usd` | NUMERIC(12,2) | no | Standard cost snapshot in USD. Margin needs both sides on the same currency basis. |
+| `created_at` | TIMESTAMP | no | When the OMS created the line. Usually inherited from the order creation time. |
 | `updated_at` | TIMESTAMP | no | Last change. Second granularity. |
 
 ---
@@ -258,6 +260,7 @@ account number.
 | `warehouse_name` | VARCHAR(120) | no | Facility name. |
 | `region` | VARCHAR(20) | no | Region served. Orders normally ship from a DC in their own region. |
 | `latitude` / `longitude` | NUMERIC(9,5) | no | Facility coordinates, for lane and distance work. |
+| `created_at` / `updated_at` | TIMESTAMP | no | Source-record audit timestamps, not physical facility construction or renovation dates. |
 
 ---
 
@@ -271,6 +274,7 @@ account number.
 | `mode` | VARCHAR(10) | no | `GROUND` · `AIR` · `OCEAN` · `RAIL`. |
 | `cost_index` | NUMERIC(6,3) | no | Relative rate card, indexed to 1.00. |
 | `published_otd_rate` | NUMERIC(5,3) | no | The on-time rate the carrier **claims** in its contract. Actual performance is in `ops.shipments` and is not obliged to agree. |
+| `created_at` / `updated_at` | TIMESTAMP | no | Source-record audit timestamps, not the carrier's corporate start date or contract effective dates. |
 
 ---
 
@@ -292,6 +296,8 @@ account number.
 | `distance_km` | NUMERIC(12,2) | no | Origin to destination. |
 | `freight_cost_usd` | NUMERIC(12,2) | no | Freight paid, USD. A function of distance, weight, carrier rate card and service level. |
 | `tracking_number` | VARCHAR(30) | no | Carrier tracking reference. |
+| `created_at` | TIMESTAMP | no | When Ops created the shipment record. This is distinct from `ship_date`, the physical hand-off date. |
+| `updated_at` | TIMESTAMP | no | Last tracking or delivery-status update. |
 
 **On-time delivery** is `delivered_date <= promised_delivery_date`. Actual OTD varies
 by carrier, lane, service level and season, and the carrier mix is not constant across
@@ -313,6 +319,7 @@ billing; this is the durable Ops hand-off to ERP, not an ERP ledger entry.
 | `amount` | NUMERIC(18,2) | no | Positive invoiced order-line total in document currency. |
 | `status` | VARCHAR(20) | no | `ISSUED` or `VOID`. Daily simulation creates `ISSUED` invoices only. |
 | `created_at` | TIMESTAMP | no | Write timestamp for the operational record. |
+| `updated_at` | TIMESTAMP | no | Last operational invoice-record change. Initially equal to `created_at`; it is distinct from downstream ERP posting time. |
 
 ---
 
@@ -331,6 +338,8 @@ billing; this is the durable Ops hand-off to ERP, not an ERP ledger entry.
 | `status` | VARCHAR(20) | no | `Open` · `Resolved` · `Closed`. |
 | `csat_score` | SMALLINT | yes | 1–5 survey response. `NULL` where the customer did not respond, which is most of the time. Response is not random — it correlates with resolution time. |
 | `assigned_region` | VARCHAR(20) | no | Support team that handled the case. |
+| `created_at` | TIMESTAMP | no | When the support record was created. For generated history it equals `opened_at`. |
+| `updated_at` | TIMESTAMP | no | Last case-state update; resolved and closed historical cases advance it through their resolution time. |
 
 ---
 
@@ -607,6 +616,12 @@ regression on distance, weight, service level and carrier.
   Older locally generated seed files remain readable: FakeForce presents the
   historical `LastModifiedDate` and `OwnerId` values as compatibility fallbacks
   until the seed is regenerated with the physical audit columns.
+- **Ops audit rollout.** Migration `002_add_audit_metadata.sql` adds missing
+  audit fields as nullable columns so an existing large database is not rewritten
+  during deployment. New seed loads and simulated events populate them from this
+  release onward. Historical data is populated by a later resumable backfill;
+  do not treat a `NULL` audit field in a pre-migration row as an absent business
+  event or a deletion.
 - **Money is in the currency named beside it.** `ops` amounts are in
   `orders.currency_code`; `erp` carries both bases explicitly. Nothing is pre-converted
   to USD except `unit_cost_usd`, `freight_cost_usd`, `list_price_usd` and

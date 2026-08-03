@@ -114,8 +114,8 @@ class OpsEventApplier:
             """
             INSERT INTO ops.order_lines (
                 order_line_id, order_id, product_id, quantity, unit_price, discount_pct,
-                line_amount, unit_cost_usd, updated_at
-            ) VALUES (%s, %s, %s, 1, %s, 0, %s, %s, %s)
+                line_amount, unit_cost_usd, created_at, updated_at
+            ) VALUES (%s, %s, %s, 1, %s, 0, %s, %s, %s, %s)
             """,
             [
                 line_id,
@@ -124,6 +124,7 @@ class OpsEventApplier:
                 product[1],
                 product[1],
                 product[2],
+                f"{order_date.isoformat()} 08:00:00",
                 f"{order_date.isoformat()} 08:00:00",
             ],
         )
@@ -154,11 +155,12 @@ class OpsEventApplier:
             INSERT INTO ops.shipments (
                 shipment_id, order_id, warehouse_code, carrier_code, service_level, ship_date,
                 promised_delivery_date, delivered_date, package_count, gross_weight_kg,
-                distance_km, freight_cost_usd, tracking_number
-            ) VALUES (%s, %s, %s, %s, 'STANDARD', %s, %s, %s, 1, 5, 100, 20, %s)
+                distance_km, freight_cost_usd, tracking_number, created_at, updated_at
+            ) VALUES (%s, %s, %s, %s, 'STANDARD', %s, %s, %s, 1, 5, 100, 20, %s, %s, %s)
             """,
             [shipment_id, order_id, warehouse[0], carrier[0], ship_date, ship_date + timedelta(days=5),
-             ship_date + timedelta(days=4), f"SIM-{shipment_id:012d}"],
+             ship_date + timedelta(days=4), f"SIM-{shipment_id:012d}",
+             f"{ship_date.isoformat()} 08:00:00", f"{ship_date.isoformat()} 17:00:00"],
         )
         if order[0] == "PENDING":
             cursor.execute(
@@ -190,11 +192,11 @@ class OpsEventApplier:
         cursor.execute(
             """
             INSERT INTO ops.invoices (
-                invoice_id, invoice_number, order_id, invoice_date, currency_code, amount, status, created_at
-            ) VALUES (%s, %s, %s, %s, %s, %s, 'ISSUED', %s)
+                invoice_id, invoice_number, order_id, invoice_date, currency_code, amount, status, created_at, updated_at
+            ) VALUES (%s, %s, %s, %s, %s, %s, 'ISSUED', %s, %s)
             """,
             [invoice_id, f"OPS-{order_id:012d}", order_id, invoice_date, order[1], amount,
-             f"{invoice_date.isoformat()} 08:00:00"],
+             f"{invoice_date.isoformat()} 08:00:00", f"{invoice_date.isoformat()} 08:00:00"],
         )
         if order[0] == "SHIPPED":
             cursor.execute(

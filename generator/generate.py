@@ -285,10 +285,14 @@ def generate(scale: float, fmt: str, out_dir: Path, seed: int) -> dict:
 
     warehouses = pd.DataFrame(WAREHOUSES, columns=[
         "warehouse_code", "warehouse_name", "region", "latitude", "longitude"])
+    warehouses["created_at"] = "2022-01-03 08:00:00"
+    warehouses["updated_at"] = "2022-01-03 08:00:00"
     emit("ops_warehouses", warehouses)
 
     carriers = pd.DataFrame(CARRIERS, columns=[
         "carrier_code", "carrier_name", "mode", "cost_index", "published_otd_rate"])
+    carriers["created_at"] = "2022-01-03 08:00:00"
+    carriers["updated_at"] = "2022-01-03 08:00:00"
     emit("ops_carriers", carriers)
 
     # -- cost centres (some open mid-history, one retires) -----------------
@@ -384,6 +388,7 @@ def generate(scale: float, fmt: str, out_dir: Path, seed: int) -> dict:
         "launch_date": d2s(launch_date),
         "is_discontinued": disc_flag,
         "discontinued_on": np.where(disc_flag, d2s(all_days[disc_off]), None),
+        "created_at": np.char.add(d2s(launch_date), " 02:00:00"),
         "updated_at": np.char.add(d2s(launch_date), " 02:00:00"),
     })
     emit("ops_products", products)
@@ -751,6 +756,7 @@ def generate(scale: float, fmt: str, out_dir: Path, seed: int) -> dict:
         "discount_pct": np.round(l_disc, 2).astype(np.float32),
         "line_amount": fmt_money(line_amount, l_ccy),
         "unit_cost_usd": unit_cost[l_prod].astype(np.float32),
+        "created_at": ts2s(o_created[line_order_pos]),
         "updated_at": ts2s(l_updated),
     })
     lines = lines.drop_duplicates(subset=["order_id", "product_id"], keep="first")
@@ -842,6 +848,12 @@ def generate(scale: float, fmt: str, out_dir: Path, seed: int) -> dict:
         "distance_km": distance.astype(np.float32),
         "freight_cost_usd": np.maximum(freight, 3.0).astype(np.float32),
         "tracking_number": np.char.add("1Z", np.char.mod("%012d", rng.integers(1, 10 ** 12, n_ship))),
+        "created_at": np.char.add(d2s(all_days[ship_day]), " 08:00:00"),
+        "updated_at": np.where(
+            delivered_known,
+            np.char.add(d2s(all_days[delivered]), " 17:00:00"),
+            np.char.add(d2s(all_days[ship_day]), " 08:00:00"),
+        ),
     })
     emit("ops_shipments", shipments)
     del shipments, distance, weight, freight, promised, delivered
@@ -874,18 +886,23 @@ def generate(scale: float, fmt: str, out_dir: Path, seed: int) -> dict:
     csat_out = pd.array(csat.astype(np.int16), dtype="Int16")
     csat_out[no_response] = pd.NA
 
+    case_opened_at = all_days[c_day].astype("datetime64[s]") + rng.integers(
+        0, 86400, n_cases
+    ) * np.timedelta64(1, "s")
+    case_updated_at = case_opened_at + np.rint(res_hours * 3600).astype(np.int64) * np.timedelta64(1, "s")
     cases = pd.DataFrame({
         "case_id": np.arange(1, n_cases + 1, dtype=np.int64),
         "customer_id": (case_cust + 1).astype(np.int64),
         "case_type": rng.choice(CASE_TYPES, n_cases),
         "priority": c_pri,
         "channel": rng.choice(["Email", "Phone", "Portal", "Chat"], n_cases, p=[.34, .22, .31, .13]),
-        "opened_at": ts2s(all_days[c_day].astype("datetime64[s]") +
-                          rng.integers(0, 86400, n_cases) * np.timedelta64(1, "s")),
+        "opened_at": ts2s(case_opened_at),
         "resolution_hours": np.where(still_open, np.nan, res_hours).astype(np.float32),
         "status": np.where(still_open, "Open", rng.choice(["Resolved", "Closed"], n_cases, p=[.35, .65])),
         "csat_score": csat_out,
         "assigned_region": c_region,
+        "created_at": ts2s(case_opened_at),
+        "updated_at": ts2s(np.where(still_open, case_opened_at, case_updated_at)),
     })
     emit("ops_support_cases", cases)
     del cases

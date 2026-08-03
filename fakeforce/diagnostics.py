@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import resource
+import shutil
 import sys
 from pathlib import Path
 
@@ -18,6 +19,14 @@ def directory_size(path: Path) -> int:
     if not path.exists():
         return 0
     return sum(file.stat().st_size for file in path.rglob("*") if file.is_file())
+
+
+def filesystem_usage(path: Path):
+    """Get usage without creating an empty configured artifact directory."""
+    candidate = path
+    while not candidate.exists() and candidate != candidate.parent:
+        candidate = candidate.parent
+    return shutil.disk_usage(candidate)
 
 
 def process_rss_bytes() -> int:
@@ -70,7 +79,26 @@ class Diagnostics:
             "open_cursors": self.state_store.count_open_cursors(),
         }
 
-    def jobs(self) -> dict[str, int]:
+    def disk(self) -> dict[str, int]:
+        """Report durable storage consumption and remaining capacity.
+
+        The state and Bulk Query export directories may intentionally be on
+        different volumes, so report free capacity for each instead of
+        assuming one value applies to both.
+        """
+        state_usage = filesystem_usage(self.settings.state_directory)
+        export_usage = filesystem_usage(self.settings.bulk_query_results_directory)
+        return {
+            "state_directory_bytes": directory_size(self.settings.state_directory),
+            "bulk_query_export_bytes": directory_size(
+                self.settings.bulk_query_results_directory
+            ),
+            "state_filesystem_free_bytes": state_usage.free,
+            "bulk_export_filesystem_free_bytes": export_usage.free,
+            "disk_reserve_bytes": self.settings.disk_reserve_bytes,
+        }
+
+    def jobs(self) -> dict[str, int | dict[str, int]]:
         with self.state_store.connection() as connection:
             active_jobs, queued_jobs = connection.execute(
                 """
@@ -79,4 +107,33 @@ class Diagnostics:
                 FROM jobs
                 """
             ).fetchone()
-        return {"active_bulk_jobs": active_jobs, "queued_bulk_jobs": queued_jobs}
+            state_counts = {
+                state: count
+                for state, count in connection.execute(
+                    "SELECT state, count(*) FROM jobs GROUP BY state ORDER BY state"
+                ).fetchall()
+            }
+            checkpointed_jobs = connection.execute(
+                "SELECT count(DISTINCT job_id) FROM job_checkpoints"
+            ).fetchone()[0]
+            checkpointed_bytes = connection.execute(
+                "SELECT coalesce(sum(bytes_written), 0) FROM job_checkpoints"
+            ).fetchone()[0]
+        return {
+            "active_bulk_jobs": active_jobs,
+            "queued_bulk_jobs": queued_jobs,
+            "jobs_by_state": state_counts,
+            "checkpointed_bulk_jobs": checkpointed_jobs,
+            "checkpointed_output_bytes": checkpointed_bytes,
+            "bulk_job_retention_hours": self.settings.bulk_job_retention_hours,
+        }
+
+    def overview(self, *, api_calls_last_24_hours: int) -> dict[str, object]:
+        """One stable, low-cost snapshot for an operator or monitoring probe."""
+        return {
+            "memory": self.memory(),
+            "disk": self.disk(),
+            "queries": self.queries(),
+            "jobs": self.jobs(),
+            "api_calls_last_24_hours": api_calls_last_24_hours,
+        }

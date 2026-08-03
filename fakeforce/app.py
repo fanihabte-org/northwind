@@ -752,6 +752,14 @@ def diagnostics_memory():
     return DIAGNOSTICS.memory()
 
 
+@app.get("/_diagnostics")
+def diagnostics_overview():
+    """Internal operator snapshot; not part of the Salesforce API surface."""
+    return DIAGNOSTICS.overview(
+        api_calls_last_24_hours=STATE_STORE.api_usage_last_24_hours()
+    )
+
+
 @app.get("/_diagnostics/queries")
 def diagnostics_queries():
     return DIAGNOSTICS.queries()

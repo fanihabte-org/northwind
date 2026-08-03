@@ -207,9 +207,11 @@ Bulk jobs through the bounded worker queue.
 
 Useful resource settings are `FAKEFORCE_MEMORY_LIMIT`, `FAKEFORCE_TEMP_DIRECTORY`,
 `FAKEFORCE_MAX_TEMP_SIZE`, `FAKEFORCE_DISK_RESERVE_BYTES`,
-`FAKEFORCE_HEAVY_QUERY_WORKERS`, and `FAKEFORCE_BULK_WORKERS`. Diagnostic snapshots
-are available at `/_diagnostics/memory`, `/_diagnostics/queries`, and
-`/_diagnostics/jobs`.
+`FAKEFORCE_HEAVY_QUERY_WORKERS`, and `FAKEFORCE_BULK_WORKERS`. The internal
+`/_diagnostics` snapshot combines memory, spill/export/state disk capacity,
+admission queues, open cursors, durable job/checkpoint state, and rolling API
+use. Its component snapshots remain available at `/_diagnostics/memory`,
+`/_diagnostics/queries`, and `/_diagnostics/jobs`.
 
 ### Bulk API 2.0
 

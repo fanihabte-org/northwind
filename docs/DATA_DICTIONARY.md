@@ -633,10 +633,15 @@ regression on distance, weight, service level and carrier.
   validated, migration `004_enforce_audit_metadata.sql` makes these fields
   mandatory and rejects any `updated_at` earlier than `created_at`.
 - **ERP audit rollout.** ERP migration `002_add_audit_metadata.sql` follows the
-  same non-rewriting introduction for ERP masters and FX rates. Revenue postings
-  are append-only accounting entries: `created_at` records their insertion while
-  the existing `posted_at` retains its financial meaning; corrections must be
-  separate `CRN` or `ADJ` rows, not in-place updates.
+  same non-rewriting introduction for ERP masters and FX rates. Migration
+  `003_add_audit_backfill_state.sql` creates a separate ERP-local durable
+  checkpoint ledger; run `python -m generator.audit_backfill --system erp`
+  in bounded batches (or `--until-complete`) to populate historical records.
+  The large `revenue_postings` ledger resumes by `posting_id`, so an interrupted
+  run never restarts its completed range. Revenue postings are append-only
+  accounting entries: `created_at` records their insertion while the existing
+  `posted_at` retains its financial meaning; corrections must be separate `CRN`
+  or `ADJ` rows, not in-place updates.
 - **Money is in the currency named beside it.** `ops` amounts are in
   `orders.currency_code`; `erp` carries both bases explicitly. Nothing is pre-converted
   to USD except `unit_cost_usd`, `freight_cost_usd`, `list_price_usd` and

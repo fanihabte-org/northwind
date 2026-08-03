@@ -1,12 +1,13 @@
-"""Backfill Ops audit timestamps in bounded, restart-safe batches.
+"""Backfill source-system audit timestamps in bounded, restart-safe batches.
 
 This command is intentionally separate from deployment and daily simulation.
 It uses the durable ``simulation.audit_backfill_progress`` ledger created by
-Ops migration 003, so an interrupted run resumes after its last committed key.
+the source system's audit-backfill migration, so an interrupted run resumes
+after its last committed key.
 
-    python -m generator.audit_backfill --status
-    python -m generator.audit_backfill --batch-size 10000 --max-batches 1
-    python -m generator.audit_backfill --until-complete
+    python -m generator.audit_backfill --system ops --status
+    python -m generator.audit_backfill --system erp --batch-size 10000 --max-batches 1
+    python -m generator.audit_backfill --system erp --until-complete
 """
 
 from __future__ import annotations
@@ -25,7 +26,7 @@ except ImportError:  # pragma: no cover - deployment image supplies psycopg
 
 
 OPS_DSN = os.getenv("OPS_PG_DSN", "postgresql://ops:ops@localhost:5433/ops")
-LOCK_NAME = "northwind:ops:audit-backfill"
+ERP_DSN = os.getenv("ERP_PG_DSN", "postgresql://erp:erp@localhost:5434/erp")
 
 
 @dataclass(frozen=True)
@@ -113,11 +114,68 @@ TARGETS: tuple[BackfillTarget, ...] = (
 )
 
 
+ERP_TARGETS: tuple[BackfillTarget, ...] = (
+    BackfillTarget(
+        "companies", "erp.companies", "company_code", "VARCHAR",
+        """
+        UPDATE erp.companies
+        SET created_at = COALESCE(created_at, timestamp '2022-01-03 08:00:00'),
+            updated_at = COALESCE(updated_at, timestamp '2022-01-03 08:00:00')
+        WHERE company_code = ANY(%s) AND (created_at IS NULL OR updated_at IS NULL)
+        """,
+    ),
+    BackfillTarget(
+        "cost_centers", "erp.cost_centers", "cost_center_code", "VARCHAR",
+        """
+        UPDATE erp.cost_centers
+        SET created_at = COALESCE(created_at, valid_from::timestamp + time '08:00'),
+            updated_at = COALESCE(
+                updated_at,
+                COALESCE(valid_to, valid_from)::timestamp +
+                    CASE WHEN valid_to IS NULL THEN time '08:00' ELSE time '17:00' END
+            )
+        WHERE cost_center_code = ANY(%s) AND (created_at IS NULL OR updated_at IS NULL)
+        """,
+    ),
+    BackfillTarget(
+        "gl_accounts", "erp.gl_accounts", "gl_account", "VARCHAR",
+        """
+        UPDATE erp.gl_accounts
+        SET created_at = COALESCE(created_at, timestamp '2022-01-03 08:00:00'),
+            updated_at = COALESCE(updated_at, timestamp '2022-01-03 08:00:00')
+        WHERE gl_account = ANY(%s) AND (created_at IS NULL OR updated_at IS NULL)
+        """,
+    ),
+    BackfillTarget(
+        "fx_rates", "erp.fx_rates",
+        "concat_ws(chr(31), from_currency, to_currency, rate_date::text, rate_type)", "TEXT",
+        """
+        UPDATE erp.fx_rates
+        SET created_at = COALESCE(created_at, loaded_at),
+            updated_at = COALESCE(updated_at, loaded_at)
+        WHERE concat_ws(chr(31), from_currency, to_currency, rate_date::text, rate_type) = ANY(%s)
+          AND (created_at IS NULL OR updated_at IS NULL)
+        """,
+    ),
+    BackfillTarget(
+        "revenue_postings", "erp.revenue_postings", "posting_id", "BIGINT",
+        """
+        UPDATE erp.revenue_postings
+        SET created_at = COALESCE(created_at, posted_at)
+        WHERE posting_id = ANY(%s) AND created_at IS NULL
+        """,
+    ),
+)
+
+
 class AuditBackfillError(RuntimeError):
     pass
 
 
-class OpsAuditBackfill:
+class AuditBackfill:
+    targets: tuple[BackfillTarget, ...] = ()
+    lock_name = "northwind:audit-backfill"
+
     def __init__(self, connection: Any, batch_size: int) -> None:
         if batch_size < 1 or batch_size > 100_000:
             raise ValueError("batch_size must be between 1 and 100000")
@@ -143,7 +201,7 @@ class OpsAuditBackfill:
         self._lock()
         try:
             results: list[dict[str, object]] = []
-            for target in TARGETS:
+            for target in self.targets:
                 batches = 0
                 while batches < max_batches or until_complete:
                     result = self._run_batch(target)
@@ -157,11 +215,11 @@ class OpsAuditBackfill:
 
     def _lock(self) -> None:
         with self.connection.cursor() as cursor:
-            cursor.execute("SELECT pg_advisory_lock(hashtext(%s))", [LOCK_NAME])
+            cursor.execute("SELECT pg_advisory_lock(hashtext(%s))", [self.lock_name])
 
     def _unlock(self) -> None:
         with self.connection.cursor() as cursor:
-            cursor.execute("SELECT pg_advisory_unlock(hashtext(%s))", [LOCK_NAME])
+            cursor.execute("SELECT pg_advisory_unlock(hashtext(%s))", [self.lock_name])
 
     def _run_batch(self, target: BackfillTarget) -> dict[str, object]:
         with self.connection.cursor() as cursor:
@@ -221,9 +279,21 @@ class OpsAuditBackfill:
         return [row[0] for row in cursor.fetchall()]
 
 
+class OpsAuditBackfill(AuditBackfill):
+    targets = TARGETS
+    lock_name = "northwind:ops:audit-backfill"
+
+
+class ErpAuditBackfill(AuditBackfill):
+    targets = ERP_TARGETS
+    lock_name = "northwind:erp:audit-backfill"
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--system", choices=("ops", "erp"), default="ops")
     parser.add_argument("--ops-dsn", default=OPS_DSN)
+    parser.add_argument("--erp-dsn", default=ERP_DSN)
     parser.add_argument("--batch-size", type=int, default=10_000)
     parser.add_argument("--max-batches", type=int, default=1)
     parser.add_argument("--until-complete", action="store_true")
@@ -231,8 +301,10 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     if psycopg is None:
         raise AuditBackfillError("pip install 'psycopg[binary]' first")
-    with psycopg.connect(args.ops_dsn, autocommit=False) as connection:
-        runner = OpsAuditBackfill(connection, args.batch_size)
+    runner_type = OpsAuditBackfill if args.system == "ops" else ErpAuditBackfill
+    dsn = args.ops_dsn if args.system == "ops" else args.erp_dsn
+    with psycopg.connect(dsn, autocommit=False) as connection:
+        runner = runner_type(connection, args.batch_size)
         if args.status:
             print(json.dumps(runner.status(), default=str, indent=2, sort_keys=True))
         else:

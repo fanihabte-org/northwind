@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import re
 from typing import Any, Literal
 
 
@@ -68,6 +69,7 @@ _KEYWORDS = {
     "OFFSET",
 }
 _PUNCTUATION = {",": "COMMA", "(": "LPAREN", ")": "RPAREN", "*": "STAR"}
+_NUMERIC_LITERAL = re.compile(r"^-?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$")
 
 
 def tokenize(source: str) -> tuple[_Token, ...]:
@@ -198,10 +200,9 @@ class _Parser:
             return True
         if upper == "FALSE":
             return False
-        try:
-            return float(token.value) if "." in token.value else int(token.value)
-        except ValueError:
-            return token.value
+        if _NUMERIC_LITERAL.fullmatch(token.value):
+            return float(token.value) if any(marker in token.value for marker in ".eE") else int(token.value)
+        return token.value
 
     def _integer(self, clause: str) -> int:
         value = self._literal()

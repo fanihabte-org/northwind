@@ -31,6 +31,12 @@ def test_parser_handles_in_and_escaped_strings() -> None:
     assert query.predicates == (InComparison("Name", ("O'Brien", "Acme")),)
 
 
+def test_parser_accepts_scientific_numeric_literals() -> None:
+    query = parse_soql("SELECT Id FROM Opportunity WHERE Amount >= 1e6")
+
+    assert query.predicates == (Comparison("Amount", ">=", 1_000_000.0),)
+
+
 @pytest.mark.parametrize(
     ("source", "message"),
     [

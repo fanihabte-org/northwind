@@ -248,6 +248,13 @@ number of seconds in `Retry-After` before retrying the same request or locator.
 Use `python -m simulator.status --state-directory state` to inspect the durable
 simulation baseline, completion watermark, and any incomplete daily run.
 
+Ops audit-field backfill is deliberately separate from deploy and the daily
+simulator. After migration `003_add_audit_backfill_state.sql` is applied, inspect
+progress with `python -m generator.audit_backfill --status`. Run a bounded unit
+of work with `python -m generator.audit_backfill --batch-size 10000 --max-batches 1`.
+It records a checkpoint per table and resumes after interruption; use
+`--until-complete` only when the database has enough maintenance capacity.
+
 ### Breaking it on purpose
 
 ```bash

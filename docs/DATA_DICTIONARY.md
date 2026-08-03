@@ -619,9 +619,11 @@ regression on distance, weight, service level and carrier.
 - **Ops audit rollout.** Migration `002_add_audit_metadata.sql` adds missing
   audit fields as nullable columns so an existing large database is not rewritten
   during deployment. New seed loads and simulated events populate them from this
-  release onward. Historical data is populated by a later resumable backfill;
-  do not treat a `NULL` audit field in a pre-migration row as an absent business
-  event or a deletion.
+  release onward. Migration `003_add_audit_backfill_state.sql` supplies durable
+  checkpoints for `python -m generator.audit_backfill`; it updates a bounded
+  primary-key batch and can resume after interruption. Until that command has
+  completed, do not treat a `NULL` audit field in a pre-migration row as an
+  absent business event or a deletion.
 - **Money is in the currency named beside it.** `ops` amounts are in
   `orders.currency_code`; `erp` carries both bases explicitly. Nothing is pre-converted
   to USD except `unit_cost_usd`, `freight_cost_usd`, `list_price_usd` and

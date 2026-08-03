@@ -59,6 +59,8 @@ class CrmDailyPlanner:
         for index in range(account_count):
             sequence = next_account + index
             account_id = f"001{sequence:015d}"
+            owner_id = rng.choice(owner_ids)
+            timestamp = self._timestamp(run_date)
             new_account_ids.append(account_id)
             events.append(
                 SourceEvent.create(
@@ -75,9 +77,12 @@ class CrmDailyPlanner:
                         "BillingCountry": rng.choice(COUNTRIES),
                         "AnnualRevenue": float(rng.randrange(500, 50_000) * 1_000),
                         "NumberOfEmployees": rng.randrange(10, 5_000),
-                        "OwnerId": rng.choice(owner_ids),
-                        "CreatedDate": self._timestamp(run_date),
-                        "LastModifiedDate": self._timestamp(run_date),
+                        "OwnerId": owner_id,
+                        "CreatedById": owner_id,
+                        "LastModifiedById": owner_id,
+                        "CreatedDate": timestamp,
+                        "LastModifiedDate": timestamp,
+                        "SystemModstamp": timestamp,
                         "IsDeleted": False,
                     },
                 )
@@ -89,6 +94,8 @@ class CrmDailyPlanner:
             sequence = next_opportunity + index
             opportunity_id = f"006{sequence:015d}"
             account_id = rng.choice(account_ids)
+            owner_id = rng.choice(owner_ids)
+            timestamp = self._timestamp(run_date)
             events.append(
                 SourceEvent.create(
                     business_date=run_date,
@@ -109,9 +116,12 @@ class CrmDailyPlanner:
                         "DiscountPercent": 0.0,
                         "LossReason": None,
                         "SalesCycleDays": 0,
-                        "OwnerId": rng.choice(owner_ids),
-                        "CreatedDate": self._timestamp(run_date),
-                        "LastModifiedDate": self._timestamp(run_date),
+                        "OwnerId": owner_id,
+                        "CreatedById": owner_id,
+                        "LastModifiedById": owner_id,
+                        "CreatedDate": timestamp,
+                        "LastModifiedDate": timestamp,
+                        "SystemModstamp": timestamp,
                         "IsDeleted": False,
                     },
                 )
@@ -152,7 +162,12 @@ class CrmDailyPlanner:
                         source_system="crm",
                         event_type="opportunity_stalled",
                         entity_id=opportunity_id,
-                        payload={"StageName": stage, "LastModifiedDate": self._timestamp(run_date)},
+                        payload={
+                            "StageName": stage,
+                            "LastModifiedById": str(row.get("OwnerId") or "REP-0001"),
+                            "LastModifiedDate": self._timestamp(run_date),
+                            "SystemModstamp": self._timestamp(run_date),
+                        },
                         anomaly_type="long_open_opportunity",
                     )
                 )
@@ -160,7 +175,9 @@ class CrmDailyPlanner:
             next_stage = STAGE_SUCCESSOR[stage]
             payload: dict[str, Any] = {
                 "StageName": next_stage,
+                "LastModifiedById": str(row.get("OwnerId") or "REP-0001"),
                 "LastModifiedDate": self._timestamp(run_date),
+                "SystemModstamp": self._timestamp(run_date),
             }
             if row.get("AccountId"):
                 payload["AccountId"] = str(row["AccountId"])

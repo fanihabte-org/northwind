@@ -509,6 +509,9 @@ def generate(scale: float, fmt: str, out_dir: Path, seed: int) -> dict:
     crm_acct_id = np.char.add("001", np.char.mod("%015d", np.arange(1, n_cust + 1)))
     crm_mod = cust_created + rng.integers(0, 900 * 86400, n_cust) * np.timedelta64(1, "s")
     crm_mod = np.minimum(crm_mod, np.datetime64(END).astype("datetime64[s]"))
+    account_owner_ids = sales_reps["rep_id"].to_numpy()[rng.integers(0, n_rep, n_cust)]
+    account_created_dates = np.char.add(np.char.replace(ts2s(cust_created), " ", "T"), ".000+0000")
+    account_modified_dates = np.char.add(np.char.replace(ts2s(crm_mod), " ", "T"), ".000+0000")
     accounts = pd.DataFrame({
         "Id": crm_acct_id,
         "Name": customers["customer_name"],
@@ -520,9 +523,12 @@ def generate(scale: float, fmt: str, out_dir: Path, seed: int) -> dict:
         "AnnualRevenue": np.round(customers["employee_count"].to_numpy() *
                                   rng.normal(185_000, 42_000, n_cust), -3),
         "NumberOfEmployees": customers["employee_count"],
-        "OwnerId": sales_reps["rep_id"].to_numpy()[rng.integers(0, n_rep, n_cust)],
-        "CreatedDate": np.char.add(np.char.replace(ts2s(cust_created), " ", "T"), ".000+0000"),
-        "LastModifiedDate": np.char.add(np.char.replace(ts2s(crm_mod), " ", "T"), ".000+0000"),
+        "OwnerId": account_owner_ids,
+        "CreatedById": account_owner_ids,
+        "LastModifiedById": account_owner_ids,
+        "CreatedDate": account_created_dates,
+        "LastModifiedDate": account_modified_dates,
+        "SystemModstamp": account_modified_dates,
         "IsDeleted": False,
     })
 
@@ -624,6 +630,9 @@ def generate(scale: float, fmt: str, out_dir: Path, seed: int) -> dict:
         all_days[opp_close_day].astype("datetime64[s]") + rng.integers(0, 30 * 86400, n_opp) * np.timedelta64(1, "s"),
         np.datetime64(END).astype("datetime64[s]"))
 
+    opportunity_owner_ids = sales_reps["rep_id"].to_numpy()[rep_of_opp]
+    opportunity_created_dates = np.char.add(np.char.replace(ts2s(opp_created_ts), " ", "T"), ".000+0000")
+    opportunity_modified_dates = np.char.add(np.char.replace(ts2s(opp_mod_ts), " ", "T"), ".000+0000")
     opportunities = pd.DataFrame({
         "Id": opp_id,
         "AccountId": crm_acct_id[opp_cust],
@@ -644,9 +653,12 @@ def generate(scale: float, fmt: str, out_dir: Path, seed: int) -> dict:
         "DiscountPercent": disc,
         "LossReason": loss_reason,
         "SalesCycleDays": (all_days[opp_close_day] - all_days[opp_create_day]).astype("timedelta64[D]").astype(int),
-        "OwnerId": sales_reps["rep_id"].to_numpy()[rep_of_opp],
-        "CreatedDate": np.char.add(np.char.replace(ts2s(opp_created_ts), " ", "T"), ".000+0000"),
-        "LastModifiedDate": np.char.add(np.char.replace(ts2s(opp_mod_ts), " ", "T"), ".000+0000"),
+        "OwnerId": opportunity_owner_ids,
+        "CreatedById": opportunity_owner_ids,
+        "LastModifiedById": opportunity_owner_ids,
+        "CreatedDate": opportunity_created_dates,
+        "LastModifiedDate": opportunity_modified_dates,
+        "SystemModstamp": opportunity_modified_dates,
         "IsDeleted": False,
     })
     # a cleanup project soft-deleted a slice of duplicates in the CRM

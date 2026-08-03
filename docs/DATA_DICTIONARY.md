@@ -449,8 +449,11 @@ envelopes on API responses, 18-character ids.
 | `AnnualRevenue` | NUMERIC(18,2) | yes | Estimated customer revenue. Sales-entered, not audited. |
 | `NumberOfEmployees` | INTEGER | yes | Estimated headcount. |
 | `OwnerId` | VARCHAR(12) | yes | Owning rep. FK to `crm.sales_reps`. |
+| `CreatedById` | VARCHAR(12) | no | Rep that created the CRM record. Initially the owning rep for generated records. |
+| `LastModifiedById` | VARCHAR(12) | no | Rep responsible for the most recent user-visible change. |
 | `CreatedDate` | VARCHAR(30) | no | Salesforce ISO-8601 with offset, e.g. `2024-03-11T09:14:22.000+0000`. |
-| `LastModifiedDate` | VARCHAR(30) | no | Same format. The natural incremental watermark for this object. |
+| `LastModifiedDate` | VARCHAR(30) | no | Same format. Last user-visible modification time. |
+| `SystemModstamp` | VARCHAR(30) | no | System-maintained change timestamp. Use this, then `Id` as a tie-breaker, for incremental CRM extraction. It is always ≥ `LastModifiedDate`. |
 | `IsDeleted` | BOOLEAN | no | Recycle-bin flag. See the note under `crm.opportunities`. |
 
 ---
@@ -474,8 +477,11 @@ envelopes on API responses, 18-character ids.
 | `LossReason` | VARCHAR(40) | yes | Set when and only when `StageName = 'Closed Lost'`. `Price` · `Competitor` · `No Decision` · `Timing` · `Feature Gap` · `Budget Cut`. |
 | `SalesCycleDays` | INTEGER | yes | `CloseDate - CreatedDate`. Varies by segment. |
 | `OwnerId` | VARCHAR(12) | yes | Owning rep. FK to `crm.sales_reps`. |
+| `CreatedById` | VARCHAR(12) | no | Rep that created the opportunity. Initially the owning rep for generated records. |
+| `LastModifiedById` | VARCHAR(12) | no | Rep responsible for the most recent user-visible change. |
 | `CreatedDate` | VARCHAR(30) | no | ISO-8601 with offset. |
-| `LastModifiedDate` | VARCHAR(30) | no | Incremental watermark. |
+| `LastModifiedDate` | VARCHAR(30) | no | Last user-visible modification time. |
+| `SystemModstamp` | VARCHAR(30) | no | System-maintained extraction watermark. Use `SystemModstamp`, then `Id`, for incremental extraction; it is always ≥ `LastModifiedDate`. |
 | `IsDeleted` | BOOLEAN | no | Recycle-bin flag. |
 
 **On `IsDeleted`.** The API mirrors Salesforce exactly: `/query` does not return
@@ -596,6 +602,11 @@ regression on distance, weight, service level and carrier.
 - **Salesforce ids are all-digit strings.** `pandas.read_csv` will read
   `001000000000000001` as an integer and drop the leading zeros unless you pin the
   dtype. The same applies to `AccountId`, `OwnerId` and `CampaignId`.
+- **CRM audit watermark.** Extract changed Accounts and Opportunities using the
+  ordered pair `(SystemModstamp, Id)`, rather than `LastModifiedDate` alone.
+  Older locally generated seed files remain readable: FakeForce presents the
+  historical `LastModifiedDate` and `OwnerId` values as compatibility fallbacks
+  until the seed is regenerated with the physical audit columns.
 - **Money is in the currency named beside it.** `ops` amounts are in
   `orders.currency_code`; `erp` carries both bases explicitly. Nothing is pre-converted
   to USD except `unit_cost_usd`, `freight_cost_usd`, `list_price_usd` and

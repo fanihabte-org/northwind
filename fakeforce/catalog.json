@@ -5,7 +5,12 @@
       "name": "Account",
       "sources": ["crm_accounts.parquet"],
       "delta_patterns": ["accounts/**/*.parquet"],
-      "version_field": "LastModifiedDate",
+      "version_field": "SystemModstamp",
+      "compatibility_aliases": {
+        "CreatedById": "OwnerId",
+        "LastModifiedById": "OwnerId",
+        "SystemModstamp": "LastModifiedDate"
+      },
       "id_field": "Id",
       "soft_delete_field": "IsDeleted",
       "mode": "read_only"
@@ -14,7 +19,12 @@
       "name": "Opportunity",
       "sources": ["crm_opportunities.parquet"],
       "delta_patterns": ["opportunities/**/*.parquet"],
-      "version_field": "LastModifiedDate",
+      "version_field": "SystemModstamp",
+      "compatibility_aliases": {
+        "CreatedById": "OwnerId",
+        "LastModifiedById": "OwnerId",
+        "SystemModstamp": "LastModifiedDate"
+      },
       "id_field": "Id",
       "soft_delete_field": "IsDeleted",
       "mode": "read_only"

@@ -67,3 +67,35 @@ def test_snapshot_id_changes_when_a_configured_source_changes(tmp_path) -> None:
     after = DatasetCatalog.from_file(catalog_path, [data_root]).snapshot_id
 
     assert after != before
+
+
+def test_catalog_exposes_compatibility_aliases_for_an_older_source_schema(tmp_path) -> None:
+    data_root = tmp_path / "data"
+    data_root.mkdir()
+    (data_root / "accounts.csv").write_text(
+        "Id,OwnerId,LastModifiedDate,IsDeleted\n001,REP-0001,2026-07-24T08:00:00.000+0000,false\n"
+    )
+    catalog_path = tmp_path / "catalog.json"
+    write_catalog(
+        catalog_path,
+        [{
+            "name": "Account",
+            "sources": ["accounts.csv"],
+            "version_field": "SystemModstamp",
+            "compatibility_aliases": {
+                "CreatedById": "OwnerId",
+                "LastModifiedById": "OwnerId",
+                "SystemModstamp": "LastModifiedDate",
+            },
+        }],
+    )
+
+    spec = DatasetCatalog.from_file(catalog_path, [data_root]).get("Account")
+
+    assert spec is not None
+    assert spec.schema.names[-3:] == ["CreatedById", "LastModifiedById", "SystemModstamp"]
+    assert spec.compatibility_aliases == (
+        ("CreatedById", "OwnerId"),
+        ("LastModifiedById", "OwnerId"),
+        ("SystemModstamp", "LastModifiedDate"),
+    )

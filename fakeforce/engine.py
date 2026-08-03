@@ -75,6 +75,12 @@ class DuckDBEngine:
         self, conn: duckdb.DuckDBPyConnection, spec: DatasetSpec
     ) -> None:
         reader = self._source_reader(spec.current_sources())
+        if spec.compatibility_aliases:
+            aliases = ", ".join(
+                f"{_quote_identifier(source)} AS {_quote_identifier(alias)}"
+                for alias, source in spec.compatibility_aliases
+            )
+            reader = f"(SELECT *, {aliases} FROM {reader})"
         if spec.version_field is not None:
             view_sql = (
                 "SELECT * EXCLUDE (__fakeforce_version_rank) FROM ("

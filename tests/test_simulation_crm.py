@@ -26,8 +26,8 @@ def test_crm_planner_is_repeatable_and_generates_complete_new_records() -> None:
     assert accounts[0].payload["Id"] == "001000000000000011"
     assert accounts[0].payload["AccountNumber"] == "ACC-000011"
     assert opportunities[0].payload["AccountId"]
-    assert {"LastModifiedDate", "IsDeleted"} <= accounts[0].payload.keys()
-    assert {"StageName", "LastModifiedDate", "IsDeleted"} <= opportunities[0].payload.keys()
+    assert {"CreatedById", "LastModifiedById", "LastModifiedDate", "SystemModstamp", "IsDeleted"} <= accounts[0].payload.keys()
+    assert {"StageName", "CreatedById", "LastModifiedById", "LastModifiedDate", "SystemModstamp", "IsDeleted"} <= opportunities[0].payload.keys()
 
 
 def test_crm_planner_marks_long_open_opportunity_without_auto_closing_it() -> None:

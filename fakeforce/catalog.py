@@ -34,6 +34,7 @@ class DatasetSpec:
     data_roots: tuple[Path, ...]
     delta_patterns: tuple[str, ...] = ()
     version_field: str | None = None
+    compatibility_aliases: tuple[tuple[str, str], ...] = ()
 
     def current_sources(self) -> tuple[Path, ...]:
         """Base files plus optional Parquet deltas published after startup."""
@@ -100,6 +101,7 @@ class DatasetCatalog:
         mode = entry.get("mode", "read_only")
         configured_deltas = entry.get("delta_patterns", [])
         version_field = entry.get("version_field")
+        configured_aliases = entry.get("compatibility_aliases", {})
         if not isinstance(id_field, str) or not id_field:
             raise CatalogError(f"{name}: id_field must be a non-empty string")
         if soft_delete_field is not None and not isinstance(soft_delete_field, str):
@@ -112,20 +114,36 @@ class DatasetCatalog:
             raise CatalogError(f"{name}: delta_patterns must be a list of strings")
         if version_field is not None and (not isinstance(version_field, str) or not version_field):
             raise CatalogError(f"{name}: version_field must be a non-empty string")
+        if not isinstance(configured_aliases, dict) or not all(
+            isinstance(alias, str) and alias and isinstance(source, str) and source
+            for alias, source in configured_aliases.items()
+        ):
+            raise CatalogError(f"{name}: compatibility_aliases must map field names to source fields")
         if configured_deltas and not version_field:
             raise CatalogError(f"{name}: delta_patterns require version_field")
         if configured_deltas and not all(path.name.endswith(".parquet") for path in source_paths):
             raise CatalogError(f"{name}: Parquet delta patterns require Parquet base sources")
 
-        schema = DatasetCatalog._read_schema(source_paths[0])
-        names = set(schema.names)
+        source_schema = DatasetCatalog._read_schema(source_paths[0])
+        names = set(source_schema.names)
         if id_field not in names:
             raise CatalogError(f"{name}: id field {id_field!r} is absent from source schema")
         if soft_delete_field is not None and soft_delete_field not in names:
             raise CatalogError(
                 f"{name}: soft-delete field {soft_delete_field!r} is absent from source schema"
             )
-        if version_field is not None and version_field not in names:
+        aliases: list[tuple[str, str]] = []
+        schema = source_schema
+        for alias, source in configured_aliases.items():
+            if source not in names:
+                raise CatalogError(
+                    f"{name}: compatibility alias source {source!r} is absent from source schema"
+                )
+            if alias in names:
+                continue
+            schema = schema.append(pa.field(alias, source_schema.field(source).type))
+            aliases.append((alias, source))
+        if version_field is not None and version_field not in schema.names:
             raise CatalogError(f"{name}: version field {version_field!r} is absent from source schema")
         return DatasetSpec(
             name,
@@ -137,6 +155,7 @@ class DatasetCatalog:
             roots,
             tuple(configured_deltas),
             version_field,
+            tuple(aliases),
         )
 
     @staticmethod

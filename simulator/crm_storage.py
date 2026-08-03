@@ -78,10 +78,12 @@ class CrmDeltaPublisher:
         paths = [path for path in paths if path.is_file()]
         literals = ", ".join(self._quote(path) for path in paths)
         placeholders = ", ".join("?" for _ in ids)
+        schema_names = set(pq.ParquetFile(self.base_sources[object_name]).schema_arrow.names)
+        version_field = "SystemModstamp" if "SystemModstamp" in schema_names else "LastModifiedDate"
         query = f"""
             SELECT * EXCLUDE (row_rank) FROM (
                 SELECT *, row_number() OVER (
-                    PARTITION BY "Id" ORDER BY "LastModifiedDate" DESC
+                    PARTITION BY "Id" ORDER BY "{version_field}" DESC
                 ) AS row_rank
                 FROM read_parquet([{literals}])
                 WHERE "Id" IN ({placeholders})

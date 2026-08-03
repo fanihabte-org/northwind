@@ -2,7 +2,7 @@
 
 Keep the deployment checkout and generated artifacts separate. On the target Mac,
 clone this repository to a stable directory such as
-`/Users/your-user/data_forge/northwind`. Do not place Bulk Query results inside that
+`/Users/your-user/northwind`. Do not place Bulk Query results inside that
 checkout.
 
 Create the durable export directory and configure its absolute host path:
@@ -11,7 +11,6 @@ Create the durable export directory and configure its absolute host path:
 mkdir -p /Users/your-user/data_forge/exports
 cp .env.example .env
 # Edit .env: set FAKEFORCE_EXPORTS_DIR and SIMULATION_BASELINE_DATE.
-docker compose up -d --build
 ```
 
 Compose mounts this directory at `/app/exports`. FakeForce writes only its durable
@@ -38,7 +37,6 @@ be changed afterwards. Check the service with:
 
 ```bash
 docker compose logs -f simulator
-docker compose exec simulator python -m simulator.daemon --once
 ```
 
 ## Generated seed data
@@ -56,7 +54,7 @@ first `docker compose up`. Use the scale appropriate for that environment (the
 default `1.0` is the full data set):
 
 ```bash
-cd /Users/your-user/data_forge/northwind
+cd /Users/your-user/northwind
 python generator/generate.py --scale 1.0 --format parquet --seed 20260728
 ```
 
@@ -67,11 +65,12 @@ them. To use a different dataset, keep the configured Parquet/CSV files under th
 catalog's approved data root and update `fakeforce/catalog.json` rather than hard-code
 object-specific file paths in the API.
 
-The Compose `migrations` service applies non-destructive, checksummed Ops and ERP
-schema migrations before the simulator starts. After the Ops and ERP services are
-healthy, load their baseline once:
+Start Compose after generating the seed. The `migrations` service applies
+non-destructive, checksummed Ops and ERP schema migrations before the simulator
+starts. After the Ops and ERP services are healthy, load their baseline once:
 
 ```bash
+docker compose up -d --build
 python generator/load.py
 ```
 
@@ -88,22 +87,26 @@ deployment from failing while the one-time load is still in progress.
 
 The workflow at `.github/workflows/ci-deploy.yml` runs tests for pull requests and
 pushes to `main`. It deploys only successful pushes to `main`, using a self-hosted
-runner labelled `dataforge-deploy` on the target Mac.
+runner labelled `self-hosted`, `macOS`, and `X64` on the target Mac.
 
 Before enabling the deploy job:
 
 1. Initialize this directory as a Git repository and push it to GitHub.
-2. Install a GitHub Actions self-hosted runner on the target Mac, give it the
-   `dataforge-deploy` label, and ensure its service account can run `docker`.
+2. Install a GitHub Actions self-hosted runner on the target Mac with the labels
+   `self-hosted`, `macOS`, and `X64`, and ensure its service account can run `docker`.
 3. Make a clean deployment clone at the value below. The workflow refuses to deploy
    if that checkout has uncommitted changes.
 4. Generate the seed data in that clone once, using the command above. It is local to
    the target machine and is not part of the Git repository.
 5. Add GitHub repository variables:
 
-   - `DATAFORGE_DEPLOY_DIR` — for example `/Users/your-user/data_forge/northwind`
-   - `DATAFORGE_EXPORTS_DIR` — for example `/Users/your-user/data_forge/exports`
+   - `NORTHWIND_DEPLOY_DIR` — for example `/Users/your-user/northwind`
+   - `NORTHWIND_EXPORTS_DIR` — for example `/Users/your-user/data_forge/exports`
 
 The runner fetches the exact tested commit, updates the clean deployment checkout,
 rebuilds the `fakeforce` and `simulator` services, and waits for the API health
 endpoint. It does not run deployment code for pull requests.
+
+`.env`, `seed/`, `state/`, exports, virtual environments, and macOS `.DS_Store`
+metadata are all ignored by Git. The deploy job therefore continues to reject real
+source changes in its checkout without being blocked by local runtime artifacts.

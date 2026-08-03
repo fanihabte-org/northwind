@@ -4,3 +4,5 @@ seed/
 .env
 __pycache__/
 .pytest_cache/
+# macOS Finder metadata must never make the trusted deployment checkout dirty.
+.DS_Store

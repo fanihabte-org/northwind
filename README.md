@@ -254,6 +254,9 @@ progress with `python -m generator.audit_backfill --status`. Run a bounded unit
 of work with `python -m generator.audit_backfill --batch-size 10000 --max-batches 1`.
 It records a checkpoint per table and resumes after interruption; use
 `--until-complete` only when the database has enough maintenance capacity.
+After every target reports completed and null/order validation returns zero,
+migration `004_enforce_audit_metadata.sql` makes the audit fields non-null and
+rejects `updated_at < created_at` for all future Ops writes.
 
 ### Breaking it on purpose
 

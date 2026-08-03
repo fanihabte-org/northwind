@@ -623,7 +623,9 @@ regression on distance, weight, service level and carrier.
   checkpoints for `python -m generator.audit_backfill`; it updates a bounded
   primary-key batch and can resume after interruption. Until that command has
   completed, do not treat a `NULL` audit field in a pre-migration row as an
-  absent business event or a deletion.
+  absent business event or a deletion. After the completed backfill has been
+  validated, migration `004_enforce_audit_metadata.sql` makes these fields
+  mandatory and rejects any `updated_at` earlier than `created_at`.
 - **Money is in the currency named beside it.** `ops` amounts are in
   `orders.currency_code`; `erp` carries both bases explicitly. Nothing is pre-converted
   to USD except `unit_cost_usd`, `freight_cost_usd`, `list_price_usd` and

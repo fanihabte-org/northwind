@@ -46,11 +46,13 @@ def test_discovery_reads_the_independent_versioned_source_chains() -> None:
         "001_initial_schema.sql",
         "002_add_audit_metadata.sql",
         "003_add_audit_backfill_state.sql",
+        "004_enforce_audit_metadata.sql",
     ]
     assert [migration.filename for migration in erp] == ["001_initial_schema.sql"]
     assert "CREATE TABLE IF NOT EXISTS ops.orders" in ops[0].sql
     assert "ADD COLUMN IF NOT EXISTS created_at" in ops[1].sql
     assert "simulation.audit_backfill_progress" in ops[2].sql
+    assert "ALTER COLUMN created_at SET NOT NULL" in ops[3].sql
     assert "CREATE TABLE IF NOT EXISTS erp.revenue_postings" in erp[0].sql
 
 

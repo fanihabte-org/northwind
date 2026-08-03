@@ -638,10 +638,11 @@ regression on distance, weight, service level and carrier.
   checkpoint ledger; run `python -m generator.audit_backfill --system erp`
   in bounded batches (or `--until-complete`) to populate historical records.
   The large `revenue_postings` ledger resumes by `posting_id`, so an interrupted
-  run never restarts its completed range. Revenue postings are append-only
-  accounting entries: `created_at` records their insertion while the existing
-  `posted_at` retains its financial meaning; corrections must be separate `CRN`
-  or `ADJ` rows, not in-place updates.
+  run never restarts its completed range. After a zero-null validation, migration
+  `004_enforce_audit_metadata.sql` makes the fields mandatory and rejects reverse
+  timestamp order. Revenue postings are append-only accounting entries:
+  `created_at` equals `posted_at`, while corrections must be separate `CRN` or
+  `ADJ` rows, not in-place updates.
 - **Money is in the currency named beside it.** `ops` amounts are in
   `orders.currency_code`; `erp` carries both bases explicitly. Nothing is pre-converted
   to USD except `unit_cost_usd`, `freight_cost_usd`, `list_price_usd` and

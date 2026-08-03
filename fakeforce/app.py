@@ -648,7 +648,8 @@ def _bulk_query_job_response(job: BulkJob) -> dict[str, str | None]:
 
 @app.get(f"/services/data/{API_VERSION}/jobs/query/{{job_id}}/results")
 def get_bulk_query_results(
-    job_id: str, locator: str | None = None, authorization: str | None = Header(default=None)
+    job_id: str, locator: str | None = None, maxRecords: int | None = None,
+    authorization: str | None = Header(default=None)
 ):
     require_token(authorization)
     job = STATE_STORE.get_job(job_id)
@@ -659,15 +660,16 @@ def get_bulk_query_results(
     if job.state != BulkJobState.JOB_COMPLETE:
         return sf_error(400, "INVALIDJOB", "Bulk query results are not available until the job is complete")
     try:
-        page = BULK_QUERY_RESULTS.page(job_id, locator)
+        page = (BULK_QUERY_RESULTS.window(job_id, locator, maxRecords)
+                if maxRecords is not None else BULK_QUERY_RESULTS.page(job_id, locator))
     except (InvalidBulkLocator, FileNotFoundError):
         return sf_error(400, "INVALIDLOCATOR", "invalid bulk result locator")
     headers = {"Sforce-NumberOfRecords": str(page.record_count)}
     if page.next_locator is not None:
         headers["Sforce-Locator"] = page.next_locator
-    return StreamingResponse(
-        BULK_QUERY_RESULTS.stream(page.path), media_type="text/csv", headers=headers
-    )
+    stream = (BULK_QUERY_RESULTS.stream_window(job_id, locator, page.record_count)
+              if maxRecords is not None else BULK_QUERY_RESULTS.stream(page.path))
+    return StreamingResponse(stream, media_type="text/csv", headers=headers)
 
 
 # --------------------------------------------------------------------------

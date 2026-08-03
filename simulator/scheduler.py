@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any, Protocol, Sequence
 from zoneinfo import ZoneInfo
 
+from simulator.bootstrap import SourceBootstrapProbe
 from simulator.config import SimulatorDuckDBSettings
 from simulator.crm import CrmDailyPlanner
 from simulator.crm_run import CrmRun
@@ -130,6 +131,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         erp_dsn=args.erp_dsn,
         policy=policy,
     )
+    report = SourceBootstrapProbe.from_dsns(
+        args.seed_directory, args.ops_dsn, args.erp_dsn
+    ).check()
+    if not report.ready:
+        raise RuntimeError(f"source baseline is not ready: {report.message()}")
     runner.state.initialize(args.baseline)
     completed = runner.run_through(through_date, args.seed)
     print(f"completed {len(completed)} simulation date(s) through {through_date.isoformat()}")

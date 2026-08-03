@@ -67,6 +67,16 @@ them. To use a different dataset, keep the configured Parquet/CSV files under th
 catalog's approved data root and update `fakeforce/catalog.json` rather than hard-code
 object-specific file paths in the API.
 
+After the Ops and ERP services are healthy, load their baseline once:
+
+```bash
+python generator/load.py
+```
+
+The simulator service waits for both database baselines and the CRM Parquet files
+before it initializes or advances simulation state. This prevents a clean deployment
+from failing while the one-time load is still in progress.
+
 ## GitHub Actions deployment
 
 The workflow at `.github/workflows/ci-deploy.yml` runs tests for pull requests and

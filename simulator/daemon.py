@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Callable, Sequence
 from zoneinfo import ZoneInfo
 
+from simulator.bootstrap import SourceBootstrapProbe, wait_for_source_bootstrap
 from simulator.policy import SimulationPolicy
 from simulator.scheduler import DailySimulationRunner, _parse_date, build_runner
 
@@ -57,6 +58,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     parser.add_argument("--ops-dsn", default=env.get("OPS_PG_DSN", "postgresql://ops:ops@ops:5432/ops"))
     parser.add_argument("--erp-dsn", default=env.get("ERP_PG_DSN", "postgresql://erp:erp@erp:5432/erp"))
+    parser.add_argument(
+        "--bootstrap-retry-seconds",
+        type=int,
+        default=int(env.get("SIMULATION_BOOTSTRAP_RETRY_SECONDS", "60")),
+        help="seconds to wait between baseline readiness checks",
+    )
     args = parser.parse_args(argv)
     if not args.baseline:
         parser.error("SIMULATION_BASELINE_DATE or --baseline is required")
@@ -68,6 +75,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         erp_dsn=args.erp_dsn,
         policy=policy,
     )
+    probe = SourceBootstrapProbe.from_dsns(args.seed_directory, args.ops_dsn, args.erp_dsn)
+    wait_for_source_bootstrap(probe, args.bootstrap_retry_seconds)
     runner.state.initialize(_parse_date(args.baseline))
     if args.once:
         runner.run_through(datetime.now(ZoneInfo(policy.timezone)).date(), args.seed)

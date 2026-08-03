@@ -10,13 +10,30 @@ Create the durable export directory and configure its absolute host path:
 ```bash
 mkdir -p /Users/your-user/data_forge/exports
 cp .env.example .env
-# Edit .env and set FAKEFORCE_EXPORTS_DIR to that directory.
+# Edit .env: set FAKEFORCE_EXPORTS_DIR and SIMULATION_BASELINE_DATE.
 docker compose up -d --build
 ```
 
 Compose mounts this directory at `/app/exports`. FakeForce writes only its durable
 Bulk Query CSV parts and manifest there; generated source data remains read-only and
 the repository remains safe to update with Git.
+
+## Daily simulator
+
+The `simulator` Compose service starts by catching up from its durable watermark,
+then runs at each midnight in `America/Los_Angeles`. It executes CRM, then Ops,
+then ERP for each missing date. It shares `state/simulation/` with FakeForce so CRM
+Parquet deltas become visible through the API without copying them into the Git
+checkout.
+
+Set `SIMULATION_BASELINE_DATE` in `.env` to the day immediately before the first
+incremental business date. This value is recorded on first start and cannot safely
+be changed afterwards. Check the service with:
+
+```bash
+docker compose logs -f simulator
+docker compose exec simulator python -m simulator.daemon --once
+```
 
 ## Generated seed data
 
@@ -65,5 +82,5 @@ Before enabling the deploy job:
    - `DATAFORGE_EXPORTS_DIR` — for example `/Users/your-user/data_forge/exports`
 
 The runner fetches the exact tested commit, updates the clean deployment checkout,
-rebuilds only the `fakeforce` service, and waits for its health endpoint. It does not
-run deployment code for pull requests.
+rebuilds the `fakeforce` and `simulator` services, and waits for the API health
+endpoint. It does not run deployment code for pull requests.

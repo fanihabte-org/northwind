@@ -2,7 +2,8 @@ name: northwind
 
 # Northwind Systems local stack.
 #
-#   northwind  : Postgres holding the ops / erp / crm source schemas
+#   ops        : order-management and fulfilment source database
+#   erp        : finance and ledger source database
 #   analytics  : an empty Postgres for you to build your own warehouse in
 #                (stands in for Redshift -- no schemas are created for you)
 #   fakeforce  : Salesforce-shaped REST API over the CRM objects
@@ -17,19 +18,35 @@ name: northwind
 # a container from the other is still running and holding the port.
 
 services:
-  northwind:
+  ops:
     image: postgres:16-alpine
     environment:
-      POSTGRES_USER: northwind
-      POSTGRES_PASSWORD: northwind
-      POSTGRES_DB: northwind
+      POSTGRES_USER: ops
+      POSTGRES_PASSWORD: ops
+      POSTGRES_DB: ops
     command: >
       postgres -c shared_buffers=512MB -c work_mem=64MB
                -c maintenance_work_mem=512MB -c max_wal_size=4GB
     ports: ["5433:5432"]
-    volumes: ["northwind_src:/var/lib/postgresql/data"]
+    volumes: ["northwind_ops:/var/lib/postgresql/data"]
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U northwind -d northwind"]
+      test: ["CMD-SHELL", "pg_isready -U ops -d ops"]
+      interval: 5s
+      retries: 10
+
+  erp:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: erp
+      POSTGRES_PASSWORD: erp
+      POSTGRES_DB: erp
+    command: >
+      postgres -c shared_buffers=512MB -c work_mem=64MB
+               -c maintenance_work_mem=512MB -c max_wal_size=4GB
+    ports: ["5434:5432"]
+    volumes: ["northwind_erp:/var/lib/postgresql/data"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U erp -d erp"]
       interval: 5s
       retries: 10
 
@@ -42,7 +59,7 @@ services:
     command: >
       postgres -c shared_buffers=512MB -c work_mem=64MB
                -c maintenance_work_mem=512MB -c max_wal_size=4GB
-    ports: ["5434:5432"]
+    ports: ["5435:5432"]
     volumes: ["northwind_analytics:/var/lib/postgresql/data"]
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U analytics -d analytics"]
@@ -66,6 +83,7 @@ services:
     shm_size: 256m
     environment:
       FAKEFORCE_SEED_DIR: /app/seed
+      FAKEFORCE_DATA_ROOTS: /app/seed:/app/state/simulation/crm
       FAKEFORCE_STATE_DIR: /app/state
       FAKEFORCE_BULK_QUERY_RESULTS_DIR: /app/exports
       FAKEFORCE_MEMORY_LIMIT: "4GB"
@@ -91,6 +109,30 @@ services:
       # container is declared unhealthy while it is still legitimately starting.
       start_period: 300s
 
+  simulator:
+    build:
+      context: .
+      dockerfile: simulator/Dockerfile
+    restart: on-failure:5
+    depends_on:
+      ops:
+        condition: service_healthy
+      erp:
+        condition: service_healthy
+    volumes:
+      - "./seed:/app/seed:ro"
+      # Shares the CRM deltas and durable simulation watermark with FakeForce.
+      - "./state:/app/state"
+    environment:
+      TZ: America/Los_Angeles
+      SIMULATION_BASELINE_DATE: "${SIMULATION_BASELINE_DATE:-}"
+      SIMULATION_SEED: "${SIMULATION_SEED:-42}"
+      FAKEFORCE_SEED_DIR: /app/seed
+      FAKEFORCE_STATE_DIR: /app/state
+      OPS_PG_DSN: postgresql://ops:ops@ops:5432/ops
+      ERP_PG_DSN: postgresql://erp:erp@erp:5432/erp
+
 volumes:
-  northwind_src:
+  northwind_ops:
+  northwind_erp:
   northwind_analytics:

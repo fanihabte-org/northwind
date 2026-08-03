@@ -1,14 +1,14 @@
 """
 Load the generated datasets into Postgres.
 
-Applies sql/01_sources.sql (which enforces every constraint) and then COPYs each
-file in. If any primary key, foreign key, unique or check constraint is violated
-the transaction aborts and nothing is committed -- so a successful run is proof
-the sources are internally valid.
+Applies each source system's independently owned DDL and then COPYs its files in.
+Ops and ERP are intentionally separate Postgres databases. If any system-local
+primary key, foreign key, unique, or check constraint is violated, that system's
+transaction aborts and nothing is committed.
 
     python generator/load.py                        # ops + erp
-    python generator/load.py --with-crm             # also load crm.* for SQL joins
-    PGDSN='postgresql://...' python generator/load.py
+    python generator/load.py --system ops
+    OPS_PG_DSN='postgresql://...' python generator/load.py --system ops
 
 Reads whichever format the generator produced -- .csv.gz, .csv or .parquet.
 Everything is streamed, so loading tens of millions of rows does not need
@@ -33,13 +33,10 @@ except ImportError:
 ROOT = Path(__file__).resolve().parents[1]
 SEED = ROOT / "seed"
 
-DSN = os.getenv("PGDSN", "postgresql://northwind:northwind@localhost:5433/northwind")
+OPS_DSN = os.getenv("OPS_PG_DSN", "postgresql://ops:ops@localhost:5433/ops")
+ERP_DSN = os.getenv("ERP_PG_DSN", "postgresql://erp:erp@localhost:5434/erp")
 
-CORE = [
-    ("erp.companies",         "erp_companies"),
-    ("erp.cost_centers",      "erp_cost_centers"),
-    ("erp.gl_accounts",       "erp_gl_accounts"),
-    ("erp.fx_rates",          "erp_fx_rates"),
+OPS_TABLES = [
     ("ops.customers",         "ops_customers"),
     ("ops.products",          "ops_products"),
     ("ops.warehouses",        "ops_warehouses"),
@@ -48,14 +45,18 @@ CORE = [
     ("ops.order_lines",       "ops_order_lines"),
     ("ops.shipments",         "ops_shipments"),
     ("ops.support_cases",     "ops_support_cases"),
+]
+ERP_TABLES = [
+    ("erp.companies",         "erp_companies"),
+    ("erp.cost_centers",      "erp_cost_centers"),
+    ("erp.gl_accounts",       "erp_gl_accounts"),
+    ("erp.fx_rates",          "erp_fx_rates"),
     ("erp.revenue_postings",  "erp_revenue_postings"),
 ]
-CRM = [
-    ("crm.sales_reps",    "crm_sales_reps"),
-    ("crm.campaigns",     "crm_campaigns"),
-    ("crm.accounts",      "crm_accounts"),
-    ("crm.opportunities", "crm_opportunities"),
-]
+SYSTEMS = {
+    "ops": (OPS_DSN, ROOT / "sql" / "01_ops.sql", OPS_TABLES),
+    "erp": (ERP_DSN, ROOT / "sql" / "02_erp.sql", ERP_TABLES),
+}
 
 
 BATCH = 250_000
@@ -122,34 +123,32 @@ def copy_table(cur, table: str, stem: str) -> int:
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--with-crm", action="store_true",
-                    help="also load crm.accounts / crm.opportunities into Postgres")
-    ap.add_argument("--dsn", default=DSN)
+    ap.add_argument("--system", choices=("ops", "erp", "all"), default="all")
+    ap.add_argument("--ops-dsn", default=OPS_DSN)
+    ap.add_argument("--erp-dsn", default=ERP_DSN)
     args = ap.parse_args()
 
-    loads = CORE + (CRM if args.with_crm else [])
-    print(f"Target: {args.dsn.split('@')[-1]}")
     t0 = time.time()
-
-    with psycopg.connect(args.dsn, autocommit=False) as conn:
-        with conn.cursor() as cur:
-            print("\nApplying sql/01_sources.sql (all constraints enabled)")
-            cur.execute((ROOT / "sql" / "01_sources.sql").read_text())
-            print("\nLoading:")
-            total = 0
-            for table, stem in loads:
-                t = time.time()
-                n = copy_table(cur, table, stem)
-                total += n
-                print(f"  {table:<24} {n:>11,} rows   {time.time() - t:6.1f}s")
-        conn.commit()
-
-    print(f"\n  COMMIT succeeded. {total:,} rows in {time.time() - t0:.1f}s.")
-    print("  Every primary key, foreign key, unique and check constraint holds.")
-    print(f"  Source: {find_seed('ops_orders').name}")
-    if not args.with_crm:
-        print("\n  crm.* not loaded. Read the CRM over the FakeForce REST API,")
-        print("  or re-run with --with-crm to query it in SQL instead.")
+    selected = ("ops", "erp") if args.system == "all" else (args.system,)
+    dsn_overrides = {"ops": args.ops_dsn, "erp": args.erp_dsn}
+    for system in selected:
+        _, ddl_path, loads = SYSTEMS[system]
+        dsn = dsn_overrides[system]
+        print(f"\n{system.upper()} target: {dsn.split('@')[-1]}")
+        with psycopg.connect(dsn, autocommit=False) as conn:
+            with conn.cursor() as cur:
+                print(f"Applying {ddl_path.relative_to(ROOT)} (all local constraints enabled)")
+                cur.execute(ddl_path.read_text())
+                total = 0
+                for table, stem in loads:
+                    t = time.time()
+                    n = copy_table(cur, table, stem)
+                    total += n
+                    print(f"  {table:<24} {n:>11,} rows   {time.time() - t:6.1f}s")
+            conn.commit()
+        print(f"  COMMIT succeeded. {total:,} {system} rows.")
+    print(f"\nCompleted in {time.time() - t0:.1f}s.")
+    print("CRM is served independently through the FakeForce REST API.")
     return 0
 
 

@@ -31,6 +31,16 @@ class DatasetSpec:
     soft_delete_field: str | None
     mode: str
     schema: pa.Schema
+    data_roots: tuple[Path, ...]
+    delta_patterns: tuple[str, ...] = ()
+    version_field: str | None = None
+
+    def current_sources(self) -> tuple[Path, ...]:
+        """Base files plus optional Parquet deltas published after startup."""
+        deltas: list[Path] = []
+        for pattern in self.delta_patterns:
+            deltas.extend(DatasetCatalog._expand_source(pattern, self.data_roots))
+        return tuple(sorted(set((*self.sources, *deltas))))
 
 
 class DatasetCatalog:
@@ -88,12 +98,24 @@ class DatasetCatalog:
         id_field = entry.get("id_field", "Id")
         soft_delete_field = entry.get("soft_delete_field", "IsDeleted")
         mode = entry.get("mode", "read_only")
+        configured_deltas = entry.get("delta_patterns", [])
+        version_field = entry.get("version_field")
         if not isinstance(id_field, str) or not id_field:
             raise CatalogError(f"{name}: id_field must be a non-empty string")
         if soft_delete_field is not None and not isinstance(soft_delete_field, str):
             raise CatalogError(f"{name}: soft_delete_field must be a string or null")
         if mode not in {"read_only", "mutable"}:
             raise CatalogError(f"{name}: mode must be read_only or mutable")
+        if not isinstance(configured_deltas, list) or not all(
+            isinstance(pattern, str) for pattern in configured_deltas
+        ):
+            raise CatalogError(f"{name}: delta_patterns must be a list of strings")
+        if version_field is not None and (not isinstance(version_field, str) or not version_field):
+            raise CatalogError(f"{name}: version_field must be a non-empty string")
+        if configured_deltas and not version_field:
+            raise CatalogError(f"{name}: delta_patterns require version_field")
+        if configured_deltas and not all(path.name.endswith(".parquet") for path in source_paths):
+            raise CatalogError(f"{name}: Parquet delta patterns require Parquet base sources")
 
         schema = DatasetCatalog._read_schema(source_paths[0])
         names = set(schema.names)
@@ -103,7 +125,19 @@ class DatasetCatalog:
             raise CatalogError(
                 f"{name}: soft-delete field {soft_delete_field!r} is absent from source schema"
             )
-        return DatasetSpec(name, tuple(source_paths), id_field, soft_delete_field, mode, schema)
+        if version_field is not None and version_field not in names:
+            raise CatalogError(f"{name}: version field {version_field!r} is absent from source schema")
+        return DatasetSpec(
+            name,
+            tuple(source_paths),
+            id_field,
+            soft_delete_field,
+            mode,
+            schema,
+            roots,
+            tuple(configured_deltas),
+            version_field,
+        )
 
     @staticmethod
     def _expand_source(pattern: str, roots: tuple[Path, ...]) -> list[Path]:
@@ -156,7 +190,7 @@ class DatasetCatalog:
                             "size": path.stat().st_size,
                             "modified_ns": path.stat().st_mtime_ns,
                         }
-                        for path in spec.sources
+                        for path in spec.current_sources()
                     ],
                 }
             )

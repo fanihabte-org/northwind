@@ -117,3 +117,60 @@ def test_engine_checks_spill_directory_reserve_before_opening_connection(tmp_pat
         pass
 
     assert calls == [(settings.temp_directory, 42)]
+
+
+def test_engine_discovers_parquet_deltas_and_returns_only_latest_record(tmp_path) -> None:
+    data_root = tmp_path / "data"
+    data_root.mkdir()
+    pq.write_table(
+        pa.table(
+            {
+                "Id": ["001"],
+                "IsDeleted": [False],
+                "Name": ["Before"],
+                "LastModifiedDate": ["2026-07-24T08:00:00.000+0000"],
+            }
+        ),
+        data_root / "accounts.parquet",
+    )
+    catalog_path = tmp_path / "catalog.json"
+    catalog_path.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "objects": [
+                    {
+                        "name": "Account",
+                        "sources": ["accounts.parquet"],
+                        "delta_patterns": ["deltas/accounts/**/*.parquet"],
+                        "version_field": "LastModifiedDate",
+                    }
+                ],
+            }
+        )
+    )
+    settings = Settings.from_env(
+        {
+            "FAKEFORCE_SEED_DIR": str(data_root),
+            "FAKEFORCE_DATA_ROOTS": str(data_root),
+            "FAKEFORCE_CATALOG_PATH": str(catalog_path),
+            "FAKEFORCE_STATE_DIR": str(tmp_path / "state"),
+        }
+    )
+    catalog = DatasetCatalog.from_file(settings.catalog_path, settings.data_roots)
+    delta = data_root / "deltas" / "accounts" / "business_date=2026-07-25" / "delta.parquet"
+    delta.parent.mkdir(parents=True)
+    pq.write_table(
+        pa.table(
+            {
+                "Id": ["001"],
+                "IsDeleted": [False],
+                "Name": ["After"],
+                "LastModifiedDate": ["2026-07-25T08:00:00.000+0000"],
+            }
+        ),
+        delta,
+    )
+
+    with DuckDBEngine(settings, catalog).connection() as conn:
+        assert conn.execute('SELECT "Name" FROM "ff_source_Account"').fetchall() == [("After",)]

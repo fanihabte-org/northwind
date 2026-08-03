@@ -33,18 +33,19 @@ jobs:
       - name: Validate Compose configuration
         env:
           FAKEFORCE_EXPORTS_DIR: ${{ runner.temp }}/fakeforce-exports
+          SIMULATION_BASELINE_DATE: 2026-07-24
         run: |
           mkdir -p "$FAKEFORCE_EXPORTS_DIR"
           docker compose config --quiet
 
   deploy:
-    name: Deploy FakeForce
+    name: Deploy Northwind
     needs: test
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: [self-hosted, self-hosted-macbook]
     environment: production
     steps:
-      - name: Update trusted checkout and restart FakeForce
+      - name: Update trusted checkout and restart services
         env:
           DEPLOY_DIR: ${{ vars.NORTHWIND_DEPLOY_DIR }}
           FAKEFORCE_EXPORTS_DIR: ${{ vars.NORTHWIND_EXPORTS_DIR }}
@@ -61,7 +62,7 @@ jobs:
           git -C "$DEPLOY_DIR" checkout --detach "$EXPECTED_SHA"
           mkdir -p "$FAKEFORCE_EXPORTS_DIR"
           export FAKEFORCE_EXPORTS_DIR
-          docker compose --project-directory "$DEPLOY_DIR" up -d --build --no-deps fakeforce
+          docker compose --project-directory "$DEPLOY_DIR" up -d --build fakeforce simulator
           for attempt in $(seq 1 24); do
             if docker compose --project-directory "$DEPLOY_DIR" exec -T fakeforce python -c \
               "import urllib.request; urllib.request.urlopen('http://localhost:8080/health', timeout=5)"; then

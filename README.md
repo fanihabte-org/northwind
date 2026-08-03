@@ -6,9 +6,9 @@ want. Built to be worked on: extract it, model it, analyse it, forecast it.
 | Source | Stands in for | Access |
 |---|---|---|
 | **FakeForce** `localhost:8080` | Salesforce | REST + OAuth + SOQL, with pagination, rate limits, a recycle bin and controllable failures |
-| **`ops`** `localhost:5433` | SQL Server order management | SQL — customers, catalogue, orders, fulfilment, support |
-| **`erp`** `localhost:5433` | ERP finance | SQL — entities, cost centres, GL, FX, the revenue ledger |
-| **`analytics`** `localhost:5434` | Redshift | An **empty** Postgres. Yours to design. |
+| **`ops`** `localhost:5433` | SQL Server order management | Separate Postgres database — customers, catalogue, orders, fulfilment, support |
+| **`erp`** `localhost:5434` | ERP finance | Separate Postgres database — entities, cost centres, GL, FX, the revenue ledger |
+| **`analytics`** `localhost:5435` | Redshift | An **empty** Postgres. Yours to design. |
 
 Read **[`docs/DATA_DICTIONARY.md`](docs/DATA_DICTIONARY.md)** first — it documents
 every table, column, relationship and metric definition.
@@ -23,8 +23,25 @@ cp .env.example .env                         # set an absolute exports directory
 python generator/generate.py --format parquet # creates local, ignored seed data
 
 docker compose up -d
-python generator/load.py              # applies the DDL and COPYs it in
+python generator/load.py              # loads separate Ops and ERP databases
 ```
+
+### Daily source increments
+
+Run the daily simulator once from the host after the source databases and seed
+files are available. It processes every missing business date in order, so it is
+safe to schedule at midnight and safe to rerun after downtime:
+
+```bash
+SIMULATION_BASELINE_DATE=2026-07-24 python -m simulator.scheduler
+```
+
+Use the date immediately before the first incremental business date as the
+baseline. The first run records it in `state/simulation/simulation.duckdb`; later
+runs reject a different baseline. Set `SIMULATION_SEED`, `OPS_PG_DSN`,
+`ERP_PG_DSN`, `FAKEFORCE_STATE_DIR`, and `FAKEFORCE_SEED_DIR` when the defaults do
+not fit your deployment. `--through YYYY-MM-DD` is useful for controlled catch-up
+and tests.
 
 For a self-hosted deployment, configure `FAKEFORCE_EXPORTS_DIR` in `.env` before
 starting Compose. Bulk Query CSV artifacts will be stored there rather than in the
@@ -80,7 +97,8 @@ prefer it unless you specifically want to eyeball raw text.
 ```
 generator/generate.py     the business simulation -- read it, or don't
 generator/load.py         applies sql/01_sources.sql and COPYs the data in
-sql/01_sources.sql        source DDL: 60+ PK / FK / UNIQUE / CHECK constraints
+sql/01_ops.sql            Ops source DDL: locally owned PK / FK / UNIQUE / CHECK constraints
+sql/02_erp.sql            ERP source DDL: locally owned PK / FK / UNIQUE / CHECK constraints
 fakeforce/app.py          Salesforce-shaped REST API over catalogued CRM files
 fakeforce/catalog.json    default object-to-file catalogue (not hard-coded in the API)
 docs/DATA_DICTIONARY.md   every table, column, relationship and metric

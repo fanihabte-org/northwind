@@ -74,10 +74,19 @@ class DuckDBEngine:
     def _create_parquet_or_csv_view(
         self, conn: duckdb.DuckDBPyConnection, spec: DatasetSpec
     ) -> None:
-        reader = self._source_reader(spec)
+        reader = self._source_reader(spec.current_sources())
+        if spec.version_field is not None:
+            view_sql = (
+                "SELECT * EXCLUDE (__fakeforce_version_rank) FROM ("
+                f"SELECT *, row_number() OVER (PARTITION BY {_quote_identifier(spec.id_field)} "
+                f"ORDER BY {_quote_identifier(spec.version_field)} DESC) AS __fakeforce_version_rank "
+                f"FROM {reader}) WHERE __fakeforce_version_rank = 1"
+            )
+        else:
+            view_sql = f"SELECT * FROM {reader}"
         conn.execute(
             f"CREATE OR REPLACE VIEW {_quote_identifier(self.relation_name(spec.object_name))} "
-            f"AS SELECT * FROM {reader}"
+            f"AS {view_sql}"
         )
 
     def initialize_mutable_tables(self, state_store: StateStore) -> None:
@@ -97,7 +106,7 @@ class DuckDBEngine:
                 if spec.mode != "mutable":
                     continue
                 table_name = _quote_identifier(f"ff_mutable_{spec.object_name}")
-                reader = self._source_reader(spec)
+                reader = self._source_reader(spec.current_sources())
                 conn.execute(
                     f"CREATE TABLE IF NOT EXISTS {table_name} AS SELECT * FROM {reader}"
                 )
@@ -108,12 +117,12 @@ class DuckDBEngine:
                 )
 
     @staticmethod
-    def _source_reader(spec: DatasetSpec) -> str:
-        sources = ", ".join(_quote_literal(path) for path in spec.sources)
-        if all(path.name.endswith(".parquet") for path in spec.sources):
+    def _source_reader(source_paths: tuple[Path, ...]) -> str:
+        sources = ", ".join(_quote_literal(path) for path in source_paths)
+        if all(path.name.endswith(".parquet") for path in source_paths):
             return f"read_parquet([{sources}], union_by_name = true)"
-        if all(path.name.endswith((".csv", ".csv.gz")) for path in spec.sources):
+        if all(path.name.endswith((".csv", ".csv.gz")) for path in source_paths):
             return f"read_csv_auto([{sources}], header = true, union_by_name = true)"
         raise ValueError(
-            f"{spec.object_name}: all configured sources must share a supported format"
+            "all configured sources must share a supported format"
         )

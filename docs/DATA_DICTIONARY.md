@@ -15,9 +15,9 @@ The company runs three systems, owned by three different teams:
 
 | System | Owner | Contents | How you read it |
 |---|---|---|---|
-| **CRM** | Sales Operations | Accounts, opportunities, reps, campaigns | REST API (`FakeForce`, Salesforce-shaped). Optionally loadable into `crm.*` for SQL. |
-| **`ops`** | IT Operations | Customers, catalogue, orders, fulfilment, support | SQL |
-| **`erp`** | Finance | Legal entities, cost centres, GL, FX, the revenue ledger | SQL |
+| **CRM** | Sales Operations | Accounts, opportunities, reps, campaigns | REST API (`FakeForce`, Salesforce-shaped) |
+| **`ops`** | IT Operations | Customers, catalogue, orders, fulfilment, support | Dedicated Postgres database on `localhost:5433` |
+| **`erp`** | Finance | Legal entities, cost centres, GL, FX, the revenue ledger | Dedicated Postgres database on `localhost:5434` |
 
 The dataset covers **2023-01-01 through 2026-07-24** — three and a half years, which
 is enough for year-over-year comparison, cohort maturation, and seasonal models that
@@ -42,6 +42,21 @@ data. They are visible only as changes in the numbers, which is the point.
 
 `NA-WEST` → US01 · `NA-EAST` → US01 · `CANADA` → CA01 · `EMEA` → DE01 ·
 `UKI` → GB01 · `APAC` → JP01
+
+### Database ownership and constraints
+
+Ops and ERP are separate PostgreSQL databases in the same Compose stack. Their DDL
+lives in `sql/01_ops.sql` and `sql/02_erp.sql`, respectively. Each database enforces
+its own primary keys, unique constraints, check constraints, foreign keys, and
+indexes. A constraint never crosses a source-system boundary: CRM, Ops, and ERP
+references across systems are deliberately business keys for the data warehouse to
+reconcile.
+
+Ops and ERP each own a `simulation.applied_events` retry ledger. Its primary key
+is the deterministic simulation event ID, so a restarted daily run can safely
+retry an already-applied source event without creating a duplicate order or
+Finance posting. The ledgers are intentionally local to their respective source
+databases and never create a cross-system constraint.
 
 ---
 
@@ -99,7 +114,44 @@ boundary. Within each system, every relationship *is* enforced.
 | `ops.orders.opportunity_ref` | `crm.opportunities."Id"` | Salesforce id | N:1 | `NULL` for `ECOMM` orders, which have no opportunity. |
 | `ops.orders.rep_id` | `crm.sales_reps.rep_id` | rep id | N:1 | `NULL` for `ECOMM`. |
 | `erp.revenue_postings.order_ref` | `ops.orders.order_id` | order id | N:1 | `NULL` for `ADJ` postings. |
-| `ops.customers.company_code` | `erp.companies.company_code` | entity code | N:1 | Determines the currency the order is booked in. |
+| `ops.customers.company_code` | `erp.companies.company_code` | entity code | N:1 | External ERP business key; Ops validates the known legal-entity code set locally but cannot hold an ERP foreign key. Determines the currency the order is booked in. |
+
+### Daily lifecycle, source lag, and controlled exceptions
+
+After the baseline period, the simulator advances the business one calendar date at
+a time at midnight in `America/Los_Angeles`. It always resumes from the most recent
+successfully completed simulation date. If the host was down for two days, it
+generates and applies both missing dates in order; it never jumps directly to the
+current date or fills the gap with a single oversized dump.
+
+The normal event flow is deliberately causal:
+
+| Upstream event | Downstream event | Normal SLA |
+|---|---|---|
+| CRM opportunity becomes `Closed Won` | Ops order is created | 1–3 calendar days |
+| Ops order is created | Shipment is created | 1–5 calendar days |
+| Shipment is eligible for billing | Order becomes invoiced | 0–3 calendar days |
+| Ops invoice event | ERP revenue posting | 1–2 calendar days |
+
+Daily additions are proportional to the current population, using an 8% annualised
+growth rate divided across the year. The exact count varies deterministically from
+the simulation seed while preserving keys, cardinalities, and all local source
+constraints.
+
+The dataset also includes a small, auditable anomaly budget. These exceptions are
+intentional and must be distinguishable from normal business flow:
+
+| Exception | Default rate | Effect |
+|---|---:|---|
+| Long-open opportunity | 0.6% | Opportunity stays in an open sales stage longer than its normal cycle. |
+| Delayed CRM-to-Ops conversion | 0.4% | A won opportunity waits beyond the normal conversion window. |
+| Stalled shipment | 0.8% | An order remains pending or unshipped for multiple additional days. |
+| Late ERP posting | 0.4% | An eligible invoice reaches Finance later than its normal posting window. |
+
+Once per ISO week, one deterministic random business date also receives a one-day
+source-delivery SLA breach. The delayed source data is published on the following
+run and the simulation ledger records the cause. This creates a realistic,
+recoverable data-quality incident without making delayed data the norm.
 
 ---
 
@@ -124,7 +176,7 @@ account number.
 | `segment` | VARCHAR(40) | no | `Enterprise` · `Mid-Market` · `SMB` · `Public Sector`. Drives order frequency, basket size, sales-cycle length and retention. |
 | `industry` | VARCHAR(60) | no | Nine values. Descriptive only; does not drive behaviour. |
 | `region` | VARCHAR(20) | no | Sales region. Determines booking entity and default currency. |
-| `company_code` | VARCHAR(10) | no | Booking legal entity. FK to `erp.companies`. |
+| `company_code` | VARCHAR(10) | no | Booking legal entity. Locally constrained to a valid Northwind entity code; externally reconciled to `erp.companies.company_code`, not a foreign key because ERP is a separate database. |
 | `country` | VARCHAR(60) | no | Billing country, implied by region. |
 | `employee_count` | INTEGER | no | Company size. Correlates with segment. |
 | `credit_limit_usd` | NUMERIC(14,2) | no | Approved credit ceiling. Log-normally distributed. |
@@ -239,6 +291,23 @@ account number.
 **On-time delivery** is `delivered_date <= promised_delivery_date`. Actual OTD varies
 by carrier, lane, service level and season, and the carrier mix is not constant across
 the window.
+
+---
+
+### `ops.invoices`
+**Grain:** one issued invoice per order. Created after shipment is eligible for
+billing; this is the durable Ops hand-off to ERP, not an ERP ledger entry.
+
+| Column | Type | Null | Description |
+|---|---|---|---|
+| `invoice_id` | BIGINT | no | Primary key. |
+| `invoice_number` | VARCHAR(24) | no | Unique operational invoice reference. |
+| `order_id` | BIGINT | no | FK to `ops.orders`; unique, so an order has at most one invoice. |
+| `invoice_date` | DATE | no | Date billing issued the invoice. |
+| `currency_code` | CHAR(3) | no | Document currency; restricted to supported order currencies. |
+| `amount` | NUMERIC(18,2) | no | Positive invoiced order-line total in document currency. |
+| `status` | VARCHAR(20) | no | `ISSUED` or `VOID`. Daily simulation creates `ISSUED` invoices only. |
+| `created_at` | TIMESTAMP | no | Write timestamp for the operational record. |
 
 ---
 

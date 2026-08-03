@@ -54,3 +54,51 @@ erp_events="$(compose exec -T erp psql -U erp -d erp -tAc \
 
 test "$ops_events" -gt 0
 test "$erp_events" -gt 0
+
+# Verify the live database guard, not merely its migration text. The probe is
+# wrapped in a transaction: the allowed corrective credit note is rolled back,
+# while an UPDATE and DELETE must fail with the trigger's object-state code.
+erp_posting_id="$(compose exec -T erp psql -U erp -d erp -tAc \
+  "SELECT posting_id FROM erp.revenue_postings ORDER BY posting_id LIMIT 1")"
+test -n "$erp_posting_id"
+
+compose exec -T erp psql -v ON_ERROR_STOP=1 -U erp -d erp \
+  -v posting_id="$erp_posting_id" <<'SQL'
+SELECT set_config('northwind.ci_posting_id', :'posting_id', false);
+DO $$
+DECLARE
+    target_posting_id BIGINT := current_setting('northwind.ci_posting_id')::BIGINT;
+BEGIN
+    BEGIN
+        UPDATE erp.revenue_postings
+        SET amount_doc = amount_doc
+        WHERE posting_id = target_posting_id;
+        RAISE EXCEPTION 'append-only UPDATE was unexpectedly accepted';
+    EXCEPTION WHEN SQLSTATE '55000' THEN
+        NULL;
+    END;
+
+    BEGIN
+        DELETE FROM erp.revenue_postings WHERE posting_id = target_posting_id;
+        RAISE EXCEPTION 'append-only DELETE was unexpectedly accepted';
+    EXCEPTION WHEN SQLSTATE '55000' THEN
+        NULL;
+    END;
+END;
+$$;
+
+BEGIN;
+INSERT INTO erp.revenue_postings (
+    posting_id, document_number, document_type, company_code, order_ref, gl_account,
+    cost_center_code, posting_date, fiscal_period, document_currency, amount_doc,
+    company_currency, amount_company, reverses_posting_id, posted_at, created_at
+)
+SELECT
+    posting_id + 9000000000000, 'CI-CRN-' || posting_id, 'CRN', company_code,
+    order_ref, gl_account, cost_center_code, posting_date, fiscal_period,
+    document_currency, -amount_doc, company_currency, -amount_company, posting_id,
+    posted_at, created_at
+FROM erp.revenue_postings
+WHERE posting_id = :'posting_id'::BIGINT;
+ROLLBACK;
+SQL

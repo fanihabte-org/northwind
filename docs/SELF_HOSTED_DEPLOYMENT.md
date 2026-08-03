@@ -110,6 +110,11 @@ on the target machine rather than being skipped because an older migration conta
 already exited successfully. The runner then waits for the API health endpoint. It
 does not run deployment code for pull requests.
 
+The source-integration workflow also verifies live ERP ledger behavior: a posted
+entry rejects `UPDATE` and `DELETE`, while a corrective credit-note-shaped `CRN`
+insert is accepted and rolled back. This protects the append-only accounting rule
+from regressions in either a migration or the runtime schema.
+
 `.env`, `seed/`, `state/`, exports, virtual environments, and macOS `.DS_Store`
 metadata are all ignored by Git. The deploy job therefore continues to reject real
 source changes in its checkout without being blocked by local runtime artifacts.

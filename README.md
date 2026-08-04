@@ -113,6 +113,11 @@ For warehouse planning, run `python -m generator.profile` after generation. It w
 an ignored `seed/_profile.json` with disk size, row counts, null counts, approximate
 cardinalities, and date-partition recommendations using bounded DuckDB scans.
 
+For repeatable API-scale measurements, run the **Read-only performance** workflow
+manually from GitHub Actions. It generates the selected deterministic scale, records
+seed/profile shape, measures representative REST and Bulk Query calls, and uploads
+both JSON reports as workflow artifacts. It never deploys to the self-hosted machine.
+
 ---
 
 ## What is here

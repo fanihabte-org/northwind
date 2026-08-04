@@ -7,12 +7,15 @@ behind it.  They remain valid while FF-004 replaces the data repository.
 from __future__ import annotations
 
 from collections.abc import Iterator
+from uuid import uuid4
 
 import pytest
 from fastapi.testclient import TestClient
 
 from fakeforce import app as fakeforce
 from fakeforce.bulk.ingest import IngestUploadStore
+from fakeforce.bulk.jobs import BulkJob, BulkJobState, BulkJobType
+from fakeforce.bulk.results import BulkQueryResultStore
 from fakeforce.catalog import DatasetCatalog
 from fakeforce.config import Settings
 from fakeforce.deadline import QueryDeadlineExceeded
@@ -201,6 +204,75 @@ def test_bulk_query_polling_returns_retry_guidance_when_the_shared_throttle_is_f
     assert throttled.json()[0]["errorCode"] == "REQUEST_LIMIT_EXCEEDED"
     assert 1 <= int(throttled.headers["Retry-After"]) <= 60
     assert throttled.headers["Sforce-Limit-Info"].startswith("api-usage=")
+
+
+def test_bulk_query_results_use_salesforce_headers_csv_and_replayable_locators(
+    client: TestClient, auth_headers: dict[str, str], tmp_path, monkeypatch
+) -> None:
+    job_id = f"750contract{uuid4().hex}"
+    result_root = tmp_path / "results"
+    job_dir = result_root / job_id
+    job_dir.mkdir(parents=True)
+    (job_dir / "part-00000.csv").write_text("Id,Name\n001,One\n002,Two\n")
+    (job_dir / "part-00001.csv").write_text("Id,Name\n003,Three\n")
+    (job_dir / "manifest.json").write_text(
+        '{"parts":[{"path":"part-00000.csv","record_count":2},'
+        '{"path":"part-00001.csv","record_count":1}]}'
+    )
+    fakeforce.STATE_STORE.create_job(
+        BulkJob(
+            job_id, BulkJobType.QUERY, "v60.0", BulkJobState.JOB_COMPLETE,
+            None, "query", "SELECT Id, Name FROM Account", fakeforce.CATALOG.snapshot_id,
+        )
+    )
+    monkeypatch.setattr(fakeforce, "BULK_QUERY_RESULTS", BulkQueryResultStore(result_root))
+
+    first = client.get(
+        f"/services/data/v60.0/jobs/query/{job_id}/results",
+        params={"maxRecords": 2}, headers=auth_headers,
+    )
+    replay = client.get(
+        f"/services/data/v60.0/jobs/query/{job_id}/results",
+        params={"maxRecords": 2}, headers=auth_headers,
+    )
+
+    assert first.status_code == 200
+    assert first.headers["content-type"].startswith("text/csv")
+    assert first.headers["Sforce-NumberOfRecords"] == "2"
+    assert first.headers["Sforce-Locator"] == "r:2"
+    assert first.content == replay.content == b"Id,Name\r\n001,One\r\n002,Two\r\n"
+
+    second = client.get(
+        f"/services/data/v60.0/jobs/query/{job_id}/results",
+        params={"maxRecords": 2, "locator": "r:2"}, headers=auth_headers,
+    )
+    assert second.status_code == 200
+    assert second.headers["Sforce-NumberOfRecords"] == "1"
+    assert "Sforce-Locator" not in second.headers
+    assert second.content == b"Id,Name\r\n003,Three\r\n"
+
+
+def test_bulk_query_results_reject_unavailable_jobs_and_invalid_locators(
+    client: TestClient, auth_headers: dict[str, str]
+) -> None:
+    pending_id = f"750contract{uuid4().hex}"
+    fakeforce.STATE_STORE.create_job(
+        BulkJob(
+            pending_id, BulkJobType.QUERY, "v60.0", BulkJobState.UPLOAD_COMPLETE,
+            None, "query", "SELECT Id FROM Account", fakeforce.CATALOG.snapshot_id,
+        )
+    )
+    pending = client.get(
+        f"/services/data/v60.0/jobs/query/{pending_id}/results", headers=auth_headers
+    )
+    missing = client.get(
+        "/services/data/v60.0/jobs/query/not-a-job/results", headers=auth_headers
+    )
+
+    assert pending.status_code == 400
+    assert pending.json()[0]["errorCode"] == "INVALIDJOB"
+    assert missing.status_code == 404
+    assert missing.json()[0]["errorCode"] == "NOT_FOUND"
 
 
 def test_bulk_ingest_job_uploads_csv_to_disk_then_closes_durably(

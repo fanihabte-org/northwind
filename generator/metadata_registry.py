@@ -25,7 +25,9 @@ except ImportError:  # pragma: no cover - deployment image supplies psycopg
 
 OPS_DSN = os.getenv("OPS_PG_DSN", "postgresql://ops:ops@localhost:5433/ops")
 ERP_DSN = os.getenv("ERP_PG_DSN", "postgresql://erp:erp@localhost:5434/erp")
-ANALYTICS_DSN = os.getenv("ANALYTICS_PG_DSN", "postgresql://analytics:analytics@localhost:5435/analytics")
+ANALYTICS_DSN = os.getenv(
+    "ANALYTICS_PG_DSN", "postgresql://analytics:analytics@localhost:5435/rev_engine_pipeline"
+)
 SOURCE_SCHEMAS = {"ops": "ops", "erp": "erp"}
 
 

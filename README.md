@@ -8,7 +8,7 @@ want. Built to be worked on: extract it, model it, analyse it, forecast it.
 | **FakeForce** `localhost:8080` | Salesforce | REST + OAuth + SOQL, with pagination, rate limits, a recycle bin and controllable failures |
 | **`ops`** `localhost:5433` | SQL Server order management | Separate Postgres database — customers, catalogue, orders, fulfilment, support |
 | **`erp`** `localhost:5434` | ERP finance | Separate Postgres database — entities, cost centres, GL, FX, the revenue ledger |
-| **`analytics`** `localhost:5435` | Redshift | Warehouse Postgres. `metadata` contains source-contract versions; business models are yours to design. |
+| **`analytics`** `localhost:5435` | Redshift | `rev_engine_pipeline` warehouse database. `metadata` contains source-contract versions; business models are yours to design. |
 
 Read **[`docs/DATA_DICTIONARY.md`](docs/DATA_DICTIONARY.md)** first — it documents
 every table, column, relationship and metric definition.

@@ -33,6 +33,38 @@ class Connection:
         return self.cursor_value
 
 
+class AdminCursor:
+    def __init__(self, exists: bool) -> None:
+        self.exists = exists
+        self.queries: list[tuple[object, object]] = []
+
+    def __enter__(self) -> "AdminCursor":
+        return self
+
+    def __exit__(self, *_args) -> None:
+        return None
+
+    def execute(self, query, parameters=None) -> None:
+        self.queries.append((query, parameters))
+
+    def fetchone(self):
+        return (1,) if self.exists else None
+
+
+class AdminConnection:
+    def __init__(self, cursor: AdminCursor) -> None:
+        self.cursor_value = cursor
+
+    def __enter__(self) -> "AdminConnection":
+        return self
+
+    def __exit__(self, *_args) -> None:
+        return None
+
+    def cursor(self) -> AdminCursor:
+        return self.cursor_value
+
+
 def _migration(directory: Path, filename: str, body: str = "SELECT 1;") -> None:
     directory.mkdir(parents=True, exist_ok=True)
     (directory / filename).write_text(body, encoding="utf-8")
@@ -101,3 +133,45 @@ def test_discovery_rejects_a_gap_in_migration_versions(tmp_path: Path) -> None:
 
     with pytest.raises(MigrationError, match="contiguous"):
         discover_migrations("ops", tmp_path)
+
+
+def test_analytics_bootstrap_creates_only_a_missing_configured_database(monkeypatch) -> None:
+    cursor = AdminCursor(exists=False)
+    connection = AdminConnection(cursor)
+
+    class FakePsycopg:
+        @staticmethod
+        def connect(_dsn, autocommit):
+            assert autocommit is True
+            return connection
+
+    class FakeConninfo:
+        @staticmethod
+        def conninfo_to_dict(_dsn):
+            return {"host": "analytics", "dbname": "rev_engine_pipeline"}
+
+        @staticmethod
+        def make_conninfo(**parameters):
+            assert parameters["dbname"] == "postgres"
+            return "admin-dsn"
+
+    class FakeSql:
+        @staticmethod
+        def SQL(template):
+            return type("Statement", (), {"format": lambda _self, name: template.format(name)})()
+
+        @staticmethod
+        def Identifier(name):
+            return f'"{name}"'
+
+    import generator.migrate as migrate
+
+    monkeypatch.setattr(migrate, "psycopg", FakePsycopg)
+    monkeypatch.setattr(migrate, "conninfo", FakeConninfo)
+    monkeypatch.setattr(migrate, "sql", FakeSql)
+    migrate.ensure_analytics_database("ignored")
+
+    assert cursor.queries == [
+        ("SELECT 1 FROM pg_database WHERE datname = %s", ["rev_engine_pipeline"]),
+        ('CREATE DATABASE "rev_engine_pipeline"', None),
+    ]

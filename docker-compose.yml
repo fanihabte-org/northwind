@@ -55,14 +55,16 @@ services:
     environment:
       POSTGRES_USER: analytics
       POSTGRES_PASSWORD: analytics
-      POSTGRES_DB: analytics
+      POSTGRES_DB: rev_engine_pipeline
     command: >
       postgres -c shared_buffers=128MB -c work_mem=16MB
                -c maintenance_work_mem=128MB -c max_wal_size=1GB
     ports: ["5435:5432"]
     volumes: ["northwind_analytics:/var/lib/postgresql/data"]
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U analytics -d analytics"]
+      # Probe PostgreSQL's always-present maintenance database. The migration
+      # runner bootstraps rev_engine_pipeline for pre-existing Docker volumes.
+      test: ["CMD-SHELL", "pg_isready -U analytics -d postgres"]
       interval: 5s
       retries: 10
 
@@ -80,7 +82,7 @@ services:
     environment:
       OPS_PG_DSN: postgresql://ops:ops@ops:5432/ops
       ERP_PG_DSN: postgresql://erp:erp@erp:5432/erp
-      ANALYTICS_PG_DSN: postgresql://analytics:analytics@analytics:5432/analytics
+      ANALYTICS_PG_DSN: postgresql://analytics:analytics@analytics:5432/rev_engine_pipeline
 
   fakeforce:
     build: ./fakeforce

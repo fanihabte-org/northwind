@@ -21,15 +21,20 @@ from typing import Any, Iterable
 
 try:
     import psycopg
+    from psycopg import conninfo, sql
 except ImportError:  # pragma: no cover - exercised in deployment image
     psycopg = None
+    conninfo = None
+    sql = None
 
 
 ROOT = Path(__file__).resolve().parents[1]
 MIGRATIONS_ROOT = ROOT / "sql" / "migrations"
 OPS_DSN = os.getenv("OPS_PG_DSN", "postgresql://ops:ops@localhost:5433/ops")
 ERP_DSN = os.getenv("ERP_PG_DSN", "postgresql://erp:erp@localhost:5434/erp")
-ANALYTICS_DSN = os.getenv("ANALYTICS_PG_DSN", "postgresql://analytics:analytics@localhost:5435/analytics")
+ANALYTICS_DSN = os.getenv(
+    "ANALYTICS_PG_DSN", "postgresql://analytics:analytics@localhost:5435/rev_engine_pipeline"
+)
 SYSTEM_DSN_DEFAULTS = {"ops": OPS_DSN, "erp": ERP_DSN, "analytics": ANALYTICS_DSN}
 _FILENAME = re.compile(r"(?P<version>[0-9]+)_(?P<name>[a-z][a-z0-9_]*)\.sql$")
 
@@ -146,6 +151,28 @@ def apply_migrations(
     return pending
 
 
+def ensure_analytics_database(dsn: str) -> None:
+    """Create the configured warehouse DB only when an older volume lacks it.
+
+    PostgreSQL's ``POSTGRES_DB`` is applied only when Docker initializes a new
+    data volume. This bootstrap keeps an existing analytics volume usable after
+    the configured database name changes, without touching any other database.
+    """
+    if psycopg is None or conninfo is None or sql is None:  # pragma: no cover
+        raise RuntimeError("pip install 'psycopg[binary]' first")
+    parameters = conninfo.conninfo_to_dict(dsn)
+    database_name = parameters.get("dbname")
+    if not database_name:
+        raise MigrationError("ANALYTICS_PG_DSN must include a database name")
+    parameters["dbname"] = "postgres"
+    admin_dsn = conninfo.make_conninfo(**parameters)
+    with psycopg.connect(admin_dsn, autocommit=True) as connection:
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT 1 FROM pg_database WHERE datname = %s", [database_name])
+            if cursor.fetchone() is None:
+                cursor.execute(sql.SQL("CREATE DATABASE {}").format(sql.Identifier(database_name)))
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Apply non-destructive source schema migrations")
     parser.add_argument("--system", choices=("ops", "erp", "analytics", "all"), default="all")
@@ -158,6 +185,8 @@ def main(argv: list[str] | None = None) -> int:
 
     selected = ("ops", "erp", "analytics") if args.system == "all" else (args.system,)
     dsns = {"ops": args.ops_dsn, "erp": args.erp_dsn, "analytics": args.analytics_dsn}
+    if "analytics" in selected:
+        ensure_analytics_database(args.analytics_dsn)
     for system in selected:
         with psycopg.connect(dsns[system], autocommit=False) as connection:
             applied = apply_migrations(connection, system)

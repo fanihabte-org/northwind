@@ -613,6 +613,14 @@ regression on distance, weight, service level and carrier.
 
 ## 7. Conventions and cautions
 
+- **Central contract registry.** `analytics.metadata.table_versions` and
+  `analytics.metadata.column_versions` hold versioned Ops and ERP table
+  contracts, separate from source-owned data. Run
+  `python -m generator.metadata_registry` in the `migrations` container after
+  a source schema change; unchanged contracts retain their existing version.
+  CRM contract registration remains API-driven and is intentionally not inferred
+  from local Parquet files.
+
 - **Timestamps are second-granularity and naive.** No timezone, no sub-second component.
 - **Salesforce ids are all-digit strings.** `pandas.read_csv` will read
   `001000000000000001` as an integer and drop the leading zeros unless you pin the

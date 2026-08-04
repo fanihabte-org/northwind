@@ -41,6 +41,7 @@ def _migration(directory: Path, filename: str, body: str = "SELECT 1;") -> None:
 def test_discovery_reads_the_independent_versioned_source_chains() -> None:
     ops = discover_migrations("ops")
     erp = discover_migrations("erp")
+    analytics = discover_migrations("analytics")
 
     assert [migration.filename for migration in ops] == [
         "001_initial_schema.sql",
@@ -66,6 +67,9 @@ def test_discovery_reads_the_independent_versioned_source_chains() -> None:
     assert "ck_revenue_postings_created_at" in erp[3].sql
     assert "tr_revenue_postings_append_only" in erp[4].sql
     assert "BEFORE UPDATE OR DELETE" in erp[4].sql
+    assert [migration.filename for migration in analytics] == ["001_create_metadata_registry.sql"]
+    assert "metadata.table_versions" in analytics[0].sql
+    assert "metadata.column_versions" in analytics[0].sql
 
 
 def test_apply_records_pending_migrations_and_is_idempotent(tmp_path: Path) -> None:

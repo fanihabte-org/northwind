@@ -1,10 +1,10 @@
-"""Apply ordered, checksummed schema migrations to an independently owned source DB.
+"""Apply ordered, checksummed schema migrations to an independently owned database.
 
 Each source has its own ``simulation.schema_migrations`` ledger inside its own
 Postgres database.  The runner never drops a schema or truncates business data;
 an altered or missing already-applied migration fails loudly instead of guessing.
 
-    python generator/migrate.py                  # Ops and ERP
+    python generator/migrate.py                  # Ops, ERP, and analytics metadata
     python generator/migrate.py --system ops
 """
 
@@ -29,7 +29,8 @@ ROOT = Path(__file__).resolve().parents[1]
 MIGRATIONS_ROOT = ROOT / "sql" / "migrations"
 OPS_DSN = os.getenv("OPS_PG_DSN", "postgresql://ops:ops@localhost:5433/ops")
 ERP_DSN = os.getenv("ERP_PG_DSN", "postgresql://erp:erp@localhost:5434/erp")
-SYSTEM_DSN_DEFAULTS = {"ops": OPS_DSN, "erp": ERP_DSN}
+ANALYTICS_DSN = os.getenv("ANALYTICS_PG_DSN", "postgresql://analytics:analytics@localhost:5435/analytics")
+SYSTEM_DSN_DEFAULTS = {"ops": OPS_DSN, "erp": ERP_DSN, "analytics": ANALYTICS_DSN}
 _FILENAME = re.compile(r"(?P<version>[0-9]+)_(?P<name>[a-z][a-z0-9_]*)\.sql$")
 
 
@@ -147,15 +148,16 @@ def apply_migrations(
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Apply non-destructive source schema migrations")
-    parser.add_argument("--system", choices=("ops", "erp", "all"), default="all")
+    parser.add_argument("--system", choices=("ops", "erp", "analytics", "all"), default="all")
     parser.add_argument("--ops-dsn", default=OPS_DSN)
     parser.add_argument("--erp-dsn", default=ERP_DSN)
+    parser.add_argument("--analytics-dsn", default=ANALYTICS_DSN)
     args = parser.parse_args(argv)
     if psycopg is None:
         raise RuntimeError("pip install 'psycopg[binary]' first")
 
-    selected = ("ops", "erp") if args.system == "all" else (args.system,)
-    dsns = {"ops": args.ops_dsn, "erp": args.erp_dsn}
+    selected = ("ops", "erp", "analytics") if args.system == "all" else (args.system,)
+    dsns = {"ops": args.ops_dsn, "erp": args.erp_dsn, "analytics": args.analytics_dsn}
     for system in selected:
         with psycopg.connect(dsns[system], autocommit=False) as connection:
             applied = apply_migrations(connection, system)

@@ -4,8 +4,8 @@ name: northwind
 #
 #   ops        : order-management and fulfilment source database
 #   erp        : finance and ledger source database
-#   analytics  : an empty Postgres for you to build your own warehouse in
-#                (stands in for Redshift -- no schemas are created for you)
+#   analytics  : warehouse Postgres with a source-contract metadata registry;
+#                business warehouse models remain yours to build
 #   fakeforce  : Salesforce-shaped REST API over the CRM objects
 #
 #   docker compose up -d --build
@@ -75,9 +75,12 @@ services:
         condition: service_healthy
       erp:
         condition: service_healthy
+      analytics:
+        condition: service_healthy
     environment:
       OPS_PG_DSN: postgresql://ops:ops@ops:5432/ops
       ERP_PG_DSN: postgresql://erp:erp@erp:5432/erp
+      ANALYTICS_PG_DSN: postgresql://analytics:analytics@analytics:5432/analytics
 
   fakeforce:
     build: ./fakeforce

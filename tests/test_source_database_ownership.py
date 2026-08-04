@@ -36,3 +36,4 @@ def test_compose_uses_distinct_ops_and_erp_databases() -> None:
     assert "shared_buffers=128MB" in compose
     assert "  migrations:\n" in compose
     assert "service_completed_successfully" in compose
+    assert "ANALYTICS_PG_DSN" in compose

@@ -119,10 +119,11 @@ cardinalities, and date-partition recommendations using bounded DuckDB scans.
 
 ```
 generator/generate.py     the business simulation -- read it, or don't
-generator/migrate.py      applies checksummed, versioned source schema migrations
+generator/migrate.py      applies checksummed, versioned source and analytics migrations
 generator/load.py         runs pending migrations, then COPYs the one-time seed data in
 sql/migrations/ops/       Ops migrations: locally owned PK / FK / UNIQUE / CHECK constraints
 sql/migrations/erp/       ERP migrations: locally owned PK / FK / UNIQUE / CHECK constraints
+sql/migrations/analytics/ warehouse metadata-registry migrations
 fakeforce/app.py          Salesforce-shaped REST API over catalogued CRM files
 fakeforce/catalog.json    default object-to-file catalogue (not hard-coded in the API)
 docs/DATA_DICTIONARY.md   every table, column, relationship and metric
@@ -140,10 +141,12 @@ committed.
 
 ## The sources are valid databases
 
-Each source owns an independent, checksummed migration ledger in
-`simulation.schema_migrations`. The Compose `migrations` service runs pending
-migrations before the simulator starts; it never drops schemas or truncates data.
-You can also run `python generator/migrate.py` or
+Each source and the analytics registry own an independent, checksummed migration
+ledger in `simulation.schema_migrations`. The Compose `migrations` service runs
+pending migrations before the simulator starts; it never drops schemas or truncates
+data. On an existing Docker volume, it creates only the configured
+`rev_engine_pipeline` database if it is absent. You can also run
+`python generator/migrate.py` or
 `python generator/load.py --migrate-only` from the host. The one-time loader then
 loads each system in a transaction — if a local constraint is violated, none of
 that system's rows commit.
@@ -254,6 +257,16 @@ applied migration version, approximate table growth and storage, most recent
 simulated event, and durable audit-backfill checkpoints. Add `--system ops` or
 `--system erp` to inspect one source only.
 
+The central registry lives in `rev_engine_pipeline.metadata`. After a source schema
+change, record the current Ops and ERP contracts with:
+
+```bash
+docker compose run --rm migrations python -m generator.metadata_registry
+```
+
+It reads PostgreSQL metadata only, creates a new version only when a normalized
+column contract changes, and never copies source business rows into analytics.
+
 Ops audit-field backfill is deliberately separate from deploy and the daily
 simulator. After migration `003_add_audit_backfill_state.sql` is applied, inspect
 progress with `python -m generator.audit_backfill --status`. Run a bounded unit
@@ -263,6 +276,20 @@ It records a checkpoint per table and resumes after interruption; use
 After every target reports completed and null/order validation returns zero,
 migration `004_enforce_audit_metadata.sql` makes the audit fields non-null and
 rejects `updated_at < created_at` for all future Ops writes.
+
+ERP uses the same bounded, restart-safe process, including its large append-only
+revenue ledger:
+
+```bash
+docker compose run --rm migrations \
+  python -m generator.audit_backfill --system erp --batch-size 100000 --until-complete
+docker compose run --rm migrations \
+  python -m generator.audit_backfill --system erp --status
+```
+
+Run the backfill before deploying ERP enforcement migrations. The ledger’s
+`created_at` equals `posted_at`; subsequent `UPDATE` and `DELETE` operations are
+rejected and a correction must be a new `CRN` or `ADJ` entry.
 
 ### Breaking it on purpose
 

@@ -66,8 +66,10 @@ catalog's approved data root and update `fakeforce/catalog.json` rather than har
 object-specific file paths in the API.
 
 Start Compose after generating the seed. The `migrations` service applies
-non-destructive, checksummed Ops and ERP schema migrations before the simulator
-starts. After the Ops and ERP services are healthy, load their baseline once:
+non-destructive, checksummed Ops, ERP, and analytics-registry migrations before the
+simulator starts. It uses the warehouse database named `rev_engine_pipeline`; on a
+pre-existing analytics Docker volume, it creates that database only if it is missing.
+After the Ops and ERP services are healthy, load their baseline once:
 
 ```bash
 docker compose up -d --build
@@ -75,8 +77,45 @@ python generator/load.py
 ```
 
 For a later schema-only upgrade, run `python generator/migrate.py`; it records
-the applied migration checksum in each source database and never reloads or
-deletes business rows.
+the applied migration checksum in each source/analytics database and never reloads
+or deletes business rows.
+
+## Source status and contract registry
+
+Use the migration image for low-cost operational snapshots; it reads catalog metadata
+and durable checkpoints rather than scanning large business tables:
+
+```bash
+docker compose run --rm migrations python -m generator.source_status
+```
+
+The central contract registry is stored in
+`rev_engine_pipeline.metadata.table_versions` and
+`rev_engine_pipeline.metadata.column_versions`. Populate or refresh it after a
+source-schema change:
+
+```bash
+docker compose run --rm migrations python -m generator.metadata_registry
+```
+
+This registry sync reads only the Ops and ERP information schemas. It does not load
+source records into analytics and creates a new version only when a column contract
+changes.
+
+## Audit-field maintenance
+
+Historical audit fields are backfilled explicitly and durably; deployments do not
+silently perform the large historical updates. Check progress or resume work in
+bounded batches:
+
+```bash
+docker compose run --rm migrations python -m generator.audit_backfill --system ops --status
+docker compose run --rm migrations python -m generator.audit_backfill --system erp --status
+```
+
+Use `--batch-size 100000 --until-complete` only when the target has sufficient
+maintenance capacity. The ERP revenue ledger is append-only: updates/deletes are
+rejected and financial corrections are new `CRN` or `ADJ` entries.
 
 The simulator service waits for both database baselines and the CRM Parquet files
 before it initializes or advances simulation state. The `ops.invoices` table can

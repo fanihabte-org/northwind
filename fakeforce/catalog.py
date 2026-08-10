@@ -51,6 +51,9 @@ class DatasetCatalog:
         self._objects = {obj.object_name: obj for obj in objects}
         if not self._objects:
             raise CatalogError("catalog must expose at least one object")
+        self._objects_by_casefold = {name.casefold(): spec for name, spec in self._objects.items()}
+        if len(self._objects_by_casefold) != len(self._objects):
+            raise CatalogError("catalog object names must be unique without regard to case")
 
     @classmethod
     def from_file(cls, path: Path, allowed_roots: Iterable[Path]) -> "DatasetCatalog":
@@ -188,7 +191,8 @@ class DatasetCatalog:
         return tuple(self._objects)
 
     def get(self, object_name: str) -> DatasetSpec | None:
-        return self._objects.get(object_name)
+        """Resolve an API object name case-insensitively to its canonical spelling."""
+        return self._objects_by_casefold.get(object_name.casefold())
 
     @property
     def snapshot_id(self) -> str:

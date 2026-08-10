@@ -66,6 +66,30 @@ def test_query_executes_against_lazy_view_with_projection_and_filter(query_servi
     ]
 
 
+def test_query_resolves_object_and_field_identifiers_without_case_sensitivity(
+    query_service,
+) -> None:
+    page = query_service.fetch_page(
+        "select id, name from account where name = 'acme' order by id", False, page_size=2
+    )
+
+    assert page.total_size == 1
+    assert page.records[0]["Id"] == "001"
+    assert page.records[0]["Name"] == "Acme"
+
+
+def test_query_text_like_and_in_literals_are_case_insensitive(query_service) -> None:
+    like_page = query_service.fetch_page(
+        "SELECT Id FROM Account WHERE Name LIKE 'a%'", False, page_size=2
+    )
+    in_page = query_service.fetch_page(
+        "SELECT Id FROM Account WHERE Name IN ('ACME', 'BETA') ORDER BY Id", False, page_size=2
+    )
+
+    assert [record["Id"] for record in like_page.records] == ["001"]
+    assert [record["Id"] for record in in_page.records] == ["001", "003"]
+
+
 def test_query_all_includes_soft_deleted_records(query_service) -> None:
     assert query_service.fetch_page("SELECT Id FROM Account", True, page_size=10).total_size == 3
 

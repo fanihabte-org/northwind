@@ -11,7 +11,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from fakeforce.catalog import DatasetCatalog
+import pyarrow as pa
+
+from fakeforce.catalog import DatasetCatalog, DatasetSpec
 from fakeforce.cursor_artifacts import CursorArtifactStore
 from fakeforce.deadline import QueryDeadlineExceeded, run_with_deadline
 from fakeforce.engine import DuckDBEngine, _quote_identifier
@@ -94,18 +96,20 @@ class LazyQueryService:
             ast = parse_soql(query)
         except SoqlSyntaxError as error:
             raise QueryValidationError("MALFORMED_QUERY", str(error)) from error
-        object_name = ast.object_name
-        spec = self.catalog.get(object_name)
+        spec = self.catalog.get(ast.object_name)
         if spec is None:
-            raise QueryValidationError("INVALID_TYPE", f"sObject type '{object_name}' is not supported")
+            raise QueryValidationError(
+                "INVALID_TYPE", f"sObject type '{ast.object_name}' is not supported"
+            )
+        object_name = spec.object_name
 
-        fields = self._fields(ast, spec.schema.names)
+        fields = self._fields(ast, spec)
         clauses: list[str] = []
         parameters: list[Any] = []
         if not include_deleted and spec.soft_delete_field is not None:
             clauses.append(f"NOT {_quote_identifier(spec.soft_delete_field)}")
         if ast.predicates:
-            where_sql, where_parameters = self._where(ast.predicates, spec.schema.names)
+            where_sql, where_parameters = self._where(ast.predicates, spec)
             clauses.extend(where_sql)
             parameters.extend(where_parameters)
 
@@ -121,12 +125,9 @@ class LazyQueryService:
         if clauses:
             source_sql += " WHERE " + " AND ".join(f"({clause})" for clause in clauses)
         if ast.order_by is not None:
-            if ast.order_by.field not in spec.schema.names:
-                raise QueryValidationError(
-                    "INVALID_FIELD", f"No such column '{ast.order_by.field}' on entity '{object_name}'"
-                )
+            order_field = self._field_name(ast.order_by.field, spec)
             source_sql += (
-                f" ORDER BY {_quote_identifier(ast.order_by.field)} {ast.order_by.direction} "
+                f" ORDER BY {_quote_identifier(order_field)} {ast.order_by.direction} "
                 f"NULLS {ast.order_by.nulls}"
             )
 
@@ -314,19 +315,23 @@ class LazyQueryService:
             records.append(record)
         return records
 
-    @staticmethod
-    def _fields(ast: SelectQuery, schema_names: list[str]) -> tuple[str, ...]:
+    @classmethod
+    def _fields(cls, ast: SelectQuery, spec: DatasetSpec) -> tuple[str, ...]:
         if ast.fields == ("*",):
             return ("*",)
-        fields = ast.fields
-        unknown = [field for field in fields if field not in schema_names]
-        if unknown:
-            raise QueryValidationError("INVALID_FIELD", f"No such column '{unknown[0]}' on entity")
-        return fields
+        return tuple(cls._field_name(field, spec) for field in ast.fields)
 
     @staticmethod
+    def _field_name(field: str, spec: DatasetSpec) -> str:
+        canonical_fields = {name.casefold(): name for name in spec.schema.names}
+        canonical = canonical_fields.get(field.casefold())
+        if canonical is None:
+            raise QueryValidationError("INVALID_FIELD", f"No such column '{field}' on entity")
+        return canonical
+
+    @classmethod
     def _where(
-        predicates: tuple[Predicate, ...], schema_names: list[str]
+        cls, predicates: tuple[Predicate, ...], spec: DatasetSpec
     ) -> tuple[list[str], list[Any]]:
         clauses: list[str] = []
         parameters: list[Any] = []
@@ -336,11 +341,14 @@ class LazyQueryService:
             else:
                 assert isinstance(predicate, Comparison)
                 field, operator, value = predicate.field, predicate.operator, predicate.value
-            if field not in schema_names:
-                raise QueryValidationError("INVALID_FIELD", f"No such column '{field}' on entity")
+            field = cls._field_name(field, spec)
             quoted_field = _quote_identifier(field)
             if operator == "IN":
-                clauses.append(f"{quoted_field} IN ({', '.join('?' for _ in value)})")
+                placeholders = ", ".join("?" for _ in value)
+                if cls._is_text_field(field, spec) and all(isinstance(item, str) for item in value):
+                    clauses.append(f"lower({quoted_field}) IN ({', '.join('lower(?)' for _ in value)})")
+                else:
+                    clauses.append(f"{quoted_field} IN ({placeholders})")
                 parameters.extend(value)
             elif value is None:
                 if operator == "=":
@@ -350,6 +358,19 @@ class LazyQueryService:
                 else:
                     raise QueryValidationError("MALFORMED_QUERY", "NULL only supports = or !=")
             else:
-                clauses.append(f"{quoted_field} {operator} ?")
+                if cls._is_text_field(field, spec) and isinstance(value, str):
+                    if operator == "LIKE":
+                        clauses.append(f"{quoted_field} ILIKE ?")
+                    elif operator in {"=", "!="}:
+                        clauses.append(f"lower({quoted_field}) {operator} lower(?)")
+                    else:
+                        clauses.append(f"{quoted_field} {operator} ?")
+                else:
+                    clauses.append(f"{quoted_field} {operator} ?")
                 parameters.append(value)
         return clauses, parameters
+
+    @staticmethod
+    def _is_text_field(field: str, spec: DatasetSpec) -> bool:
+        data_type = spec.schema.field(field).type
+        return pa.types.is_string(data_type) or pa.types.is_large_string(data_type)

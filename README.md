@@ -9,6 +9,7 @@ want. Built to be worked on: extract it, model it, analyse it, forecast it.
 | **`ops`** `localhost:5433` | SQL Server order management | Separate Postgres database — customers, catalogue, orders, fulfilment, support |
 | **`erp`** `localhost:5434` | ERP finance | Separate Postgres database — entities, cost centres, GL, FX, the revenue ledger |
 | **`analytics`** `localhost:5435` | Redshift | `rev_engine_pipeline` warehouse database. `metadata` contains source-contract versions; business models are yours to design. |
+| **`crm`** `localhost:5436` | CRM transaction store | Reserved PostgreSQL serving database for the forthcoming indexed FakeForce API. It is initially empty; FakeForce continues to read its configured Parquet sources until the validated cutover. |
 
 Read **[`docs/DATA_DICTIONARY.md`](docs/DATA_DICTIONARY.md)** first — it documents
 every table, column, relationship and metric definition.

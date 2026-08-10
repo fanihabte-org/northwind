@@ -6,6 +6,8 @@ name: northwind
 #   erp        : finance and ledger source database
 #   analytics  : warehouse Postgres with a source-contract metadata registry;
 #                business warehouse models remain yours to build
+#   crm        : transactional CRM serving database for FakeForce (introduced
+#                empty; the existing Parquet-backed API remains active until cutover)
 #   fakeforce  : Salesforce-shaped REST API over the CRM objects
 #
 #   docker compose up -d --build
@@ -65,6 +67,25 @@ services:
       # Probe PostgreSQL's always-present maintenance database. The migration
       # runner bootstraps rev_engine_pipeline for pre-existing Docker volumes.
       test: ["CMD-SHELL", "pg_isready -U analytics -d postgres"]
+      interval: 5s
+      retries: 10
+
+  # This is deliberately separate from both the analytics warehouse and the
+  # Parquet seed. It will become the indexed transactional serving store for
+  # Account and Opportunity, while Parquet remains a generation/staging format.
+  crm:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: crm
+      POSTGRES_PASSWORD: crm
+      POSTGRES_DB: crm
+    command: >
+      postgres -c shared_buffers=128MB -c work_mem=16MB
+               -c maintenance_work_mem=128MB -c max_wal_size=1GB
+    ports: ["5436:5432"]
+    volumes: ["northwind_crm:/var/lib/postgresql/data"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U crm -d crm"]
       interval: 5s
       retries: 10
 
@@ -165,3 +186,4 @@ volumes:
   northwind_ops:
   northwind_erp:
   northwind_analytics:
+  northwind_crm:

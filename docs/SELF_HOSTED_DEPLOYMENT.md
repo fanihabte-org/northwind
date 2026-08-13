@@ -129,21 +129,22 @@ deployment from failing while the one-time load is still in progress.
 
 The workflow at `.github/workflows/ci-deploy.yml` runs tests for pull requests and
 pushes to `main`. It deploys only successful pushes to `main`, using a self-hosted
-runner labelled `self-hosted`, `macOS`, and `X64` on the target Mac.
+Linux x64 runner labelled `self-hosted`, `Linux`, and `X64`.
 
 Before enabling the deploy job:
 
 1. Initialize this directory as a Git repository and push it to GitHub.
-2. Install a GitHub Actions self-hosted runner on the target Mac with the labels
-   `self-hosted`, `macOS`, and `X64`, and ensure its service account can run `docker`.
+2. Install a GitHub Actions self-hosted runner on the target Linux server with the
+   labels `self-hosted`, `Linux`, and `X64`, and ensure its service account can run
+   `docker`.
 3. Make a clean deployment clone at the value below. The workflow refuses to deploy
    if that checkout has uncommitted changes.
 4. Generate the seed data in that clone once, using the command above. It is local to
    the target machine and is not part of the Git repository.
 5. Add GitHub repository variables:
 
-   - `NORTHWIND_DEPLOY_DIR` — for example `/Users/your-user/northwind`
-   - `NORTHWIND_EXPORTS_DIR` — for example `/Users/your-user/data_forge/exports`
+   - `NORTHWIND_DEPLOY_DIR` — for example `/home/your-user/projects/northwind`
+   - `NORTHWIND_EXPORTS_DIR` — for example `/srv/data/northwind/exports`
 
 The runner fetches the exact tested commit, rebuilds the migration, `fakeforce`,
 and simulator images, and runs the one-shot migration service before restarting

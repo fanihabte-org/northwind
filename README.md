@@ -63,9 +63,11 @@ unavailable—the daemon logs the error and retries in 60 seconds, then backs of
 to one hour. Configure `SIMULATION_RETRY_INITIAL_SECONDS` and
 `SIMULATION_RETRY_MAX_SECONDS` in `.env` if needed; completed days are never rerun.
 
-For a self-hosted deployment, configure `FAKEFORCE_EXPORTS_DIR` in `.env` before
-starting Compose. Bulk Query CSV artifacts will be stored there rather than in the
-repository. See [`docs/SELF_HOSTED_DEPLOYMENT.md`](docs/SELF_HOSTED_DEPLOYMENT.md).
+For a self-hosted deployment, configure `NORTHWIND_SEED_DIR`,
+`NORTHWIND_STATE_DIR`, and `FAKEFORCE_EXPORTS_DIR` in `.env` before starting
+Compose. These bind mounts keep generated Parquet datasets, durable simulator/API
+state, and Bulk Query CSV artifacts outside the Git checkout. See
+[`docs/SELF_HOSTED_DEPLOYMENT.md`](docs/SELF_HOSTED_DEPLOYMENT.md).
 
 Smoke test:
 

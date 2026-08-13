@@ -1,21 +1,24 @@
 # Self-hosted deployment
 
-Keep the deployment checkout and generated artifacts separate. On the target Mac,
-clone this repository to a stable directory such as
-`/Users/your-user/northwind`. Do not place Bulk Query results inside that
-checkout.
+Keep the deployment checkout, generated datasets, and service state separate.
+Clone this repository to a user-owned directory such as
+`~/project/northwind`; do not place data or runtime state in that checkout.
 
-Create the durable export directory and configure its absolute host path:
+Create the machine-owned data and state directories, then configure their absolute
+host paths:
 
 ```bash
-mkdir -p /Users/your-user/data_forge/exports
+mkdir -p /srv/data/northwind/seed
+mkdir -p /srv/data/northwind/exports
+mkdir -p /srv/volumes/northwind/state
 cp .env.example .env
-# Edit .env: set FAKEFORCE_EXPORTS_DIR and SIMULATION_BASELINE_DATE.
+# Edit .env: set all three /srv paths and SIMULATION_BASELINE_DATE.
 ```
 
-Compose mounts this directory at `/app/exports`. FakeForce writes only its durable
-Bulk Query CSV parts and manifest there; generated source data remains read-only and
-the repository remains safe to update with Git.
+Compose mounts the seed directory read-only at `/app/seed`, durable service state
+at `/app/state`, and exports at `/app/exports`. FakeForce writes only its durable
+Bulk Query CSV parts and manifest to the export directory; the repository remains
+safe to update with Git.
 
 ## Daily simulator
 
@@ -54,16 +57,16 @@ first `docker compose up`. Use the scale appropriate for that environment (the
 default `1.0` is the full data set):
 
 ```bash
-cd /Users/your-user/northwind
+cd ~/project/northwind
 python generator/generate.py --scale 1.0 --format parquet --seed 20260728
+mv seed/* /srv/data/northwind/seed/
 ```
 
-This writes the files required by the default `Account` and `Opportunity` catalog to
-the local `seed/` directory. Deployment updates leave those untracked files in place;
-do not run `git clean -fdx` in the deployment checkout unless you intend to regenerate
-them. To use a different dataset, keep the configured Parquet/CSV files under the
-catalog's approved data root and update `fakeforce/catalog.json` rather than hard-code
-object-specific file paths in the API.
+This writes the files required by the default `Account` and `Opportunity` catalog.
+Move them to the configured seed directory after generation. Deployment updates do
+not touch that directory. To use a different dataset, keep the configured Parquet/CSV
+files under the catalog's approved data root and update `fakeforce/catalog.json`
+rather than hard-code object-specific file paths in the API.
 
 Start Compose after generating the seed. The `migrations` service applies
 non-destructive, checksummed Ops, ERP, and analytics-registry migrations before the

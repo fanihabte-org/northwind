@@ -43,3 +43,5 @@ def test_compose_uses_distinct_ops_and_erp_databases() -> None:
     assert "service_completed_successfully" in compose
     assert "ANALYTICS_PG_DSN" in compose
     assert "rev_engine_pipeline" in compose
+    assert '"${NORTHWIND_SEED_DIR:-./seed}:/app/seed:ro"' in compose
+    assert '"${NORTHWIND_STATE_DIR:-./state}:/app/state"' in compose

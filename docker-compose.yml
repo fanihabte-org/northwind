@@ -109,12 +109,14 @@ services:
     build: ./fakeforce
     ports: ["8080:8080"]
     volumes:
-      - "./seed:/app/seed:ro"
+      # Source datasets are machine-owned data, not checkout contents. The
+      # relative defaults preserve local developer and CI compatibility.
+      - "${NORTHWIND_SEED_DIR:-./seed}:/app/seed:ro"
       # Bind-mount the complete package so restarts pick up source changes.
       - "./fakeforce:/app/fakeforce:ro"
       # Durable cursors, jobs, artifacts, and DuckDB spill files survive a
       # container restart and remain separate from generated source data.
-      - "./state:/app/state"
+      - "${NORTHWIND_STATE_DIR:-./state}:/app/state"
       # Bulk Query CSV artifacts are intentionally outside the repository.
       - "${FAKEFORCE_EXPORTS_DIR:?Set FAKEFORCE_EXPORTS_DIR in .env}:/app/exports"
     # Sources are scanned lazily by DuckDB. The persistent state volume also
@@ -161,9 +163,9 @@ services:
       migrations:
         condition: service_completed_successfully
     volumes:
-      - "./seed:/app/seed:ro"
+      - "${NORTHWIND_SEED_DIR:-./seed}:/app/seed:ro"
       # Shares the CRM deltas and durable simulation watermark with FakeForce.
-      - "./state:/app/state"
+      - "${NORTHWIND_STATE_DIR:-./state}:/app/state"
     environment:
       TZ: America/Los_Angeles
       SIMULATION_BASELINE_DATE: "${SIMULATION_BASELINE_DATE:-}"

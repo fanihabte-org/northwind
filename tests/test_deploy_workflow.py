@@ -14,3 +14,9 @@ def test_deploy_rebuilds_and_runs_migrations_before_restarting_services() -> Non
     assert migrate in workflow
     assert restart in workflow
     assert workflow.index(build) < workflow.index(migrate) < workflow.index(restart)
+
+
+def test_deploy_targets_the_linux_production_runner() -> None:
+    workflow = (ROOT / ".github" / "workflows" / "ci-deploy.yml").read_text()
+
+    assert "runs-on: [self-hosted, Linux, X64]" in workflow

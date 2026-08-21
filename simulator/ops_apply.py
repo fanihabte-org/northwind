@@ -218,8 +218,12 @@ class OpsEventApplier:
         order = cursor.fetchone()
         if order is None:
             raise RuntimeError(f"invoice requires existing order {order_id}")
-        cursor.execute("SELECT 1 FROM ops.shipments WHERE shipment_id = %s AND order_id = %s", [shipment_id, order_id])
-        if cursor.fetchone() is None:
+        cursor.execute(
+            "SELECT ship_date FROM ops.shipments WHERE shipment_id = %s AND order_id = %s",
+            [shipment_id, order_id],
+        )
+        shipment = cursor.fetchone()
+        if shipment is None:
             raise RuntimeError(f"invoice requires shipment {shipment_id} for order {order_id}")
         cursor.execute("SELECT coalesce(sum(line_amount), 0) FROM ops.order_lines WHERE order_id = %s", [order_id])
         amount = cursor.fetchone()[0]
@@ -238,7 +242,28 @@ class OpsEventApplier:
              f"{invoice_date.isoformat()} 08:00:00", f"{invoice_date.isoformat()} 08:00:00"],
         )
         if order[0] == "SHIPPED":
+            shipment_date = date.fromisoformat(str(payload.get("shipment_date", shipment[0])))
+            transition_time = f"{invoice_date.isoformat()} 08:00:00"
+            sla_due_at = f"{(shipment_date + timedelta(days=3)).isoformat()} 08:00:00"
+            sla_status = "BREACHED" if invoice_date > shipment_date + timedelta(days=3) else "ON_TIME"
+            cursor.execute(
+                """
+                INSERT INTO ops.order_status_history (
+                    order_id, previous_status, new_status, occurred_at, recorded_at,
+                    source_event_id, sla_due_at, sla_status, anomaly_type
+                ) VALUES (%s, 'SHIPPED', 'INVOICED', %s, %s, %s, %s, %s, %s)
+                """,
+                [
+                    order_id,
+                    transition_time,
+                    transition_time,
+                    event.event_id,
+                    sla_due_at,
+                    sla_status,
+                    event.anomaly_type,
+                ],
+            )
             cursor.execute(
                 "UPDATE ops.orders SET status = 'INVOICED', updated_at = %s WHERE order_id = %s",
-                [f"{invoice_date.isoformat()} 08:00:00", order_id],
+                [transition_time, order_id],
             )

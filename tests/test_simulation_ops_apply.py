@@ -95,6 +95,8 @@ def test_ops_applier_applies_shipment_and_invoice_lifecycle_events() -> None:
     assert OpsEventApplier().apply(invoice_cursor, [invoice]) == 1
     invoice_statements = "\n".join(invoice_cursor.queries)
     assert "INSERT INTO ops.invoices" in invoice_statements
+    assert "INSERT INTO ops.invoice_status_history" in invoice_statements
+    assert "NULL, 'ISSUED'" in invoice_statements
     assert "INSERT INTO ops.order_status_history" in invoice_statements
     assert "'SHIPPED', 'INVOICED'" in invoice_statements
     assert "status = 'INVOICED'" in invoice_statements
@@ -104,3 +106,11 @@ def test_ops_applier_applies_shipment_and_invoice_lifecycle_events() -> None:
         if "INSERT INTO ops.order_status_history" in query
     )
     assert history_parameters[4:] == ["2026-07-31 08:00:00", "ON_TIME", None]
+    invoice_history_parameters = next(
+        parameters
+        for query, parameters in zip(invoice_cursor.queries, invoice_cursor.parameters)
+        if "INSERT INTO ops.invoice_status_history" in query
+    )
+    assert invoice_history_parameters[0] == 900
+    assert invoice_history_parameters[1:3] == ["2026-07-29 08:00:00"] * 2
+    assert invoice_history_parameters[4:] == ["2026-07-31 08:00:00", "ON_TIME", None]

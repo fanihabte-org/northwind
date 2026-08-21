@@ -247,6 +247,10 @@ class OpsEventApplier:
         cursor.execute("SELECT coalesce(max(invoice_id), 0) + 1 FROM ops.invoices")
         invoice_id = cursor.fetchone()[0]
         invoice_date = event.business_date
+        shipment_date = date.fromisoformat(str(payload.get("shipment_date", shipment[0])))
+        transition_time = f"{invoice_date.isoformat()} 08:00:00"
+        sla_due_at = f"{(shipment_date + timedelta(days=3)).isoformat()} 08:00:00"
+        sla_status = "BREACHED" if invoice_date > shipment_date + timedelta(days=3) else "ON_TIME"
         cursor.execute(
             """
             INSERT INTO ops.invoices (
@@ -256,11 +260,24 @@ class OpsEventApplier:
             [invoice_id, f"OPS-{order_id:012d}", order_id, invoice_date, order[1], amount,
              f"{invoice_date.isoformat()} 08:00:00", f"{invoice_date.isoformat()} 08:00:00"],
         )
+        cursor.execute(
+            """
+            INSERT INTO ops.invoice_status_history (
+                invoice_id, previous_status, new_status, occurred_at, recorded_at,
+                source_event_id, sla_due_at, sla_status, anomaly_type
+            ) VALUES (%s, NULL, 'ISSUED', %s, %s, %s, %s, %s, %s)
+            """,
+            [
+                invoice_id,
+                transition_time,
+                transition_time,
+                event.event_id,
+                sla_due_at,
+                sla_status,
+                event.anomaly_type,
+            ],
+        )
         if order[0] == "SHIPPED":
-            shipment_date = date.fromisoformat(str(payload.get("shipment_date", shipment[0])))
-            transition_time = f"{invoice_date.isoformat()} 08:00:00"
-            sla_due_at = f"{(shipment_date + timedelta(days=3)).isoformat()} 08:00:00"
-            sla_status = "BREACHED" if invoice_date > shipment_date + timedelta(days=3) else "ON_TIME"
             cursor.execute(
                 """
                 INSERT INTO ops.order_status_history (

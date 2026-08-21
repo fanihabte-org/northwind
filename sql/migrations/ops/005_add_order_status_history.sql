@@ -30,3 +30,4 @@ CREATE INDEX IF NOT EXISTS ix_order_status_history_order_occurred
     ON ops.order_status_history (order_id, occurred_at);
 
 CREATE INDEX IF NOT EXISTS ix_order_status_history_sla_occurred
+    ON ops.order_status_history (sla_status, occurred_at);

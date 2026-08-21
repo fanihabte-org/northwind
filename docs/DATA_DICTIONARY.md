@@ -321,7 +321,7 @@ account number.
 | `service_level` | VARCHAR(15) | no | `STANDARD` (5 day base) · `EXPEDITED` (2 day) · `ECONOMY` (9 day). Multiplies freight cost. |
 | `ship_date` | DATE | no | Left the warehouse. |
 | `promised_delivery_date` | DATE | no | Commitment made to the customer. Derived from service level and distance. |
-| `delivered_date` | DATE | yes | Actual delivery. `NULL` where delivery falls after the end of the window — in transit, not missing. |
+| `delivered_date` | DATE | yes | Actual delivery. `NULL` while the shipment remains in transit; it is populated only by the later delivery lifecycle event. |
 | `package_count` | SMALLINT | no | Pieces in the shipment. |
 | `gross_weight_kg` | NUMERIC(12,2) | no | Billable weight. |
 | `distance_km` | NUMERIC(12,2) | no | Origin to destination. |

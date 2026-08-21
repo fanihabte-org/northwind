@@ -39,7 +39,7 @@ class OpsEventApplier:
 
     @staticmethod
     def _event_priority(event: SourceEvent) -> int:
-        return {"order_created": 0, "shipment_created": 1, "invoice_created": 2}.get(
+        return {"order_created": 0, "shipment_created": 1, "shipment_delivered": 2, "invoice_created": 3}.get(
             event.event_type, 99
         )
 
@@ -48,6 +48,8 @@ class OpsEventApplier:
             self._apply_order(cursor, event)
         elif event.event_type == "shipment_created":
             self._apply_shipment(cursor, event)
+        elif event.event_type == "shipment_delivered":
+            self._apply_delivery(cursor, event)
         elif event.event_type == "invoice_created":
             self._apply_invoice(cursor, event)
         else:
@@ -172,10 +174,10 @@ class OpsEventApplier:
                 shipment_id, order_id, warehouse_code, carrier_code, service_level, ship_date,
                 promised_delivery_date, delivered_date, package_count, gross_weight_kg,
                 distance_km, freight_cost_usd, tracking_number, created_at, updated_at
-            ) VALUES (%s, %s, %s, %s, 'STANDARD', %s, %s, %s, 1, 5, 100, 20, %s, %s, %s)
+            ) VALUES (%s, %s, %s, %s, 'STANDARD', %s, %s, NULL, 1, 5, 100, 20, %s, %s, %s)
             """,
             [shipment_id, order_id, warehouse[0], carrier[0], ship_date, ship_date + timedelta(days=5),
-             ship_date + timedelta(days=4), f"SIM-{shipment_id:012d}",
+             f"SIM-{shipment_id:012d}",
              f"{ship_date.isoformat()} 08:00:00", f"{ship_date.isoformat()} 17:00:00"],
         )
         transition_time = f"{ship_date.isoformat()} 08:00:00"
@@ -221,6 +223,45 @@ class OpsEventApplier:
                 "UPDATE ops.orders SET status = 'SHIPPED', updated_at = %s WHERE order_id = %s",
                 [transition_time, order_id],
             )
+
+    def _apply_delivery(self, cursor: Cursor, event: SourceEvent) -> None:
+        payload = event.payload
+        shipment_id = int(payload["shipment_id"])
+        cursor.execute(
+            "SELECT delivered_date, promised_delivery_date FROM ops.shipments WHERE shipment_id = %s",
+            [shipment_id],
+        )
+        shipment = cursor.fetchone()
+        if shipment is None:
+            raise RuntimeError(f"delivery requires shipment {shipment_id}")
+        if shipment[0] is not None:
+            return
+        delivery_date = event.business_date
+        promised_delivery_date = date.fromisoformat(str(shipment[1]))
+        transition_time = f"{delivery_date.isoformat()} 17:00:00"
+        sla_due_at = f"{promised_delivery_date.isoformat()} 17:00:00"
+        sla_status = "BREACHED" if delivery_date > promised_delivery_date else "ON_TIME"
+        cursor.execute(
+            "UPDATE ops.shipments SET delivered_date = %s, updated_at = %s WHERE shipment_id = %s",
+            [delivery_date, transition_time, shipment_id],
+        )
+        cursor.execute(
+            """
+            INSERT INTO ops.shipment_status_history (
+                shipment_id, previous_status, new_status, occurred_at, recorded_at,
+                source_event_id, sla_due_at, sla_status, anomaly_type
+            ) VALUES (%s, 'SHIPPED', 'DELIVERED', %s, %s, %s, %s, %s, %s)
+            """,
+            [
+                shipment_id,
+                transition_time,
+                transition_time,
+                event.event_id,
+                sla_due_at,
+                sla_status,
+                event.anomaly_type,
+            ],
+        )
 
     def _apply_invoice(self, cursor: Cursor, event: SourceEvent) -> None:
         payload = event.payload

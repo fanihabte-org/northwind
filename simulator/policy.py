@@ -43,6 +43,7 @@ class SimulationPolicy:
     annual_growth_rate: float = 0.08
     crm_to_ops: DayWindow = DayWindow(1, 3)
     order_to_shipment: DayWindow = DayWindow(1, 5)
+    shipment_to_delivery: DayWindow = DayWindow(1, 5)
     shipment_to_invoice: DayWindow = DayWindow(0, 3)
     invoice_to_erp: DayWindow = DayWindow(1, 2)
     weekly_sla_breach_days: int = 1

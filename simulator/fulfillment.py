@@ -28,6 +28,7 @@ class FulfillmentPlanner:
         ops_events: Iterable[SourceEvent],
         shipped_order_ids: set[int],
         invoiced_order_ids: set[int],
+        delivered_shipment_ids: set[int],
         snapshot: FulfillmentSnapshot,
     ) -> list[SourceEvent]:
         events = list(ops_events)
@@ -35,7 +36,10 @@ class FulfillmentPlanner:
         invoices = self._invoices(
             run_date, events, shipments, invoiced_order_ids
         )
-        return shipments + invoices
+        deliveries = self._deliveries(
+            run_date, [*events, *shipments], delivered_shipment_ids
+        )
+        return shipments + invoices + deliveries
 
     def _shipments(
         self,
@@ -111,6 +115,39 @@ class FulfillmentPlanner:
             )
         return invoices
 
+    def _deliveries(
+        self,
+        run_date: date,
+        events: Iterable[SourceEvent],
+        delivered_shipment_ids: set[int],
+    ) -> list[SourceEvent]:
+        deliveries: list[SourceEvent] = []
+        for shipment in sorted(
+            (event for event in events if event.event_type == "shipment_created"),
+            key=lambda event: event.event_id,
+        ):
+            shipment_id = int(shipment.payload["shipment_id"])
+            if shipment_id in delivered_shipment_ids:
+                continue
+            delay = self._delivery_delay(shipment)
+            if shipment.business_date + timedelta(days=delay) > run_date:
+                continue
+            deliveries.append(
+                SourceEvent.create(
+                    business_date=run_date,
+                    source_system="ops",
+                    event_type="shipment_delivered",
+                    entity_id=str(shipment_id),
+                    payload={
+                        "shipment_id": shipment_id,
+                        "order_id": int(shipment.payload["order_id"]),
+                        "shipment_date": shipment.business_date.isoformat(),
+                        "shipment_to_delivery_delay_days": delay,
+                    },
+                )
+            )
+        return deliveries
+
     def _shipment_delay(self, order: SourceEvent) -> tuple[int, str | None]:
         digest = hashlib.sha256(f"shipment:{order.event_id}".encode()).digest()
         span = self.policy.order_to_shipment.maximum - self.policy.order_to_shipment.minimum + 1
@@ -124,3 +161,8 @@ class FulfillmentPlanner:
         digest = hashlib.sha256(f"invoice:{shipment.event_id}".encode()).digest()
         span = self.policy.shipment_to_invoice.maximum - self.policy.shipment_to_invoice.minimum + 1
         return self.policy.shipment_to_invoice.minimum + digest[0] % span
+
+    def _delivery_delay(self, shipment: SourceEvent) -> int:
+        digest = hashlib.sha256(f"delivery:{shipment.event_id}".encode()).digest()
+        span = self.policy.shipment_to_delivery.maximum - self.policy.shipment_to_delivery.minimum + 1
+        return self.policy.shipment_to_delivery.minimum + digest[0] % span

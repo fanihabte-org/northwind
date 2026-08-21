@@ -66,7 +66,7 @@ class OpsRun:
         fulfillment_events = [
             event
             for event in self.state.events_for(run_date, "ops")
-            if event.event_type in {"shipment_created", "invoice_created"}
+            if event.event_type in {"shipment_created", "shipment_delivered", "invoice_created"}
         ]
         applied += self._apply(fulfillment_events)
         records = len(self.state.events_for(run_date, "ops"))
@@ -96,24 +96,30 @@ class OpsRun:
             for event in ops_events
             if event.event_type == "order_created"
         ]
-        snapshot, shipped, invoiced = self._read_fulfillment_snapshot(order_ids)
-        return self.fulfillment_planner.plan(run_date, ops_events, shipped, invoiced, snapshot)
+        snapshot, shipped, invoiced, delivered = self._read_fulfillment_snapshot(order_ids)
+        return self.fulfillment_planner.plan(run_date, ops_events, shipped, invoiced, delivered, snapshot)
 
     def _read_fulfillment_snapshot(
         self, order_ids: list[int]
-    ) -> tuple[FulfillmentSnapshot, set[int], set[int]]:
+    ) -> tuple[FulfillmentSnapshot, set[int], set[int], set[int]]:
         connection = self.connection_factory()
         try:
             cursor = connection.cursor()
             cursor.execute("SELECT coalesce(max(shipment_id), 0) + 1 FROM ops.shipments")
             snapshot = FulfillmentSnapshot(cursor.fetchone()[0])
             if not order_ids:
-                return snapshot, set(), set()
+                return snapshot, set(), set(), set()
             cursor.execute("SELECT order_id FROM ops.shipments WHERE order_id = ANY(%s)", [order_ids])
             shipped = {row[0] for row in cursor.fetchall()}
             cursor.execute("SELECT order_id FROM ops.invoices WHERE order_id = ANY(%s)", [order_ids])
             invoiced = {row[0] for row in cursor.fetchall()}
-            return snapshot, shipped, invoiced
+            cursor.execute(
+                "SELECT shipment_id FROM ops.shipments "
+                "WHERE order_id = ANY(%s) AND delivered_date IS NOT NULL",
+                [order_ids],
+            )
+            delivered = {row[0] for row in cursor.fetchall()}
+            return snapshot, shipped, invoiced, delivered
         finally:
             connection.close()
 

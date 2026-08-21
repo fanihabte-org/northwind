@@ -114,3 +114,27 @@ def test_ops_applier_applies_shipment_and_invoice_lifecycle_events() -> None:
     assert invoice_history_parameters[0] == 900
     assert invoice_history_parameters[1:3] == ["2026-07-29 08:00:00"] * 2
     assert invoice_history_parameters[4:] == ["2026-07-31 08:00:00", "ON_TIME", None]
+
+
+def test_ops_applier_marks_shipment_delivered_and_records_history() -> None:
+    delivery = SourceEvent.create(
+        business_date=date(2026, 8, 2),
+        source_system="ops",
+        event_type="shipment_delivered",
+        entity_id="500",
+        payload={"shipment_id": 500, "order_id": 100},
+    )
+    cursor = RecordingCursor()
+    cursor.responses = iter([None, (None, date(2026, 8, 1))])
+
+    assert OpsEventApplier().apply(cursor, [delivery]) == 1
+    statements = "\n".join(cursor.queries)
+    assert "SET delivered_date = %s, updated_at = %s" in statements
+    assert "INSERT INTO ops.shipment_status_history" in statements
+    assert "'SHIPPED', 'DELIVERED'" in statements
+    history_parameters = next(
+        parameters
+        for query, parameters in zip(cursor.queries, cursor.parameters)
+        if "INSERT INTO ops.shipment_status_history" in query
+    )
+    assert history_parameters[4:] == ["2026-08-01 17:00:00", "BREACHED", None]

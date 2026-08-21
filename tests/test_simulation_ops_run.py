@@ -73,7 +73,7 @@ def test_ops_run_plans_and_applies_due_order_after_crm(tmp_path) -> None:
 
     snapshot_connection = Connection([(100,), []])
     apply_connection = Connection([None, None, None, (1, 100.0, 55.0), (900,)])
-    fulfillment_snapshot_connection = Connection([(500,), [], []])
+    fulfillment_snapshot_connection = Connection([(500,), [], [], []])
     fulfillment_apply_connection = Connection([])
     connections = iter([
         snapshot_connection,

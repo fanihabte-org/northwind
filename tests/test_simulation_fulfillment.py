@@ -18,7 +18,7 @@ def _order(order_id: int = 100) -> SourceEvent:
 def test_fulfillment_creates_shipment_then_invoice_after_sla() -> None:
     planner = FulfillmentPlanner(SimulationPolicy())
 
-    shipments = planner.plan(date(2026, 7, 10), [_order()], set(), {100}, FulfillmentSnapshot(500))
+    shipments = planner.plan(date(2026, 7, 10), [_order()], set(), {100}, set(), FulfillmentSnapshot(500))
     shipment = next(event for event in shipments if event.event_type == "shipment_created")
     prior_shipment = SourceEvent.create(
         business_date=date(2026, 7, 1),
@@ -28,7 +28,7 @@ def test_fulfillment_creates_shipment_then_invoice_after_sla() -> None:
         payload={"shipment_id": 500, "order_id": 100},
     )
     invoices = planner.plan(
-        date(2026, 7, 10), [_order(), prior_shipment], {100}, set(), FulfillmentSnapshot(501)
+        date(2026, 7, 10), [_order(), prior_shipment], {100}, set(), set(), FulfillmentSnapshot(501)
     )
     invoice = next(event for event in invoices if event.event_type == "invoice_created")
 
@@ -40,7 +40,7 @@ def test_fulfillment_creates_shipment_then_invoice_after_sla() -> None:
 def test_fulfillment_does_not_recreate_existing_order_steps() -> None:
     planner = FulfillmentPlanner(SimulationPolicy())
 
-    events = planner.plan(date(2026, 7, 10), [_order()], {100}, {100}, FulfillmentSnapshot(500))
+    events = planner.plan(date(2026, 7, 10), [_order()], {100}, {100}, set(), FulfillmentSnapshot(500))
 
     assert events == []
 
@@ -50,8 +50,27 @@ def test_stalled_shipment_is_deterministic_and_delayed() -> None:
     planner = FulfillmentPlanner(policy)
     orders = [_order(order_id) for order_id in range(1, 400)]
 
-    events = planner.plan(date(2026, 7, 20), orders, set(), set(), FulfillmentSnapshot(1))
+    events = planner.plan(date(2026, 7, 20), orders, set(), set(), set(), FulfillmentSnapshot(1))
 
     stalled = [event for event in events if event.anomaly_type == "stalled_shipment"]
     assert stalled
     assert all(event.payload["order_to_shipment_delay_days"] > policy.order_to_shipment.maximum for event in stalled)
+
+
+def test_fulfillment_creates_one_delivery_event_after_shipment_delay() -> None:
+    planner = FulfillmentPlanner(SimulationPolicy())
+    shipment = SourceEvent.create(
+        business_date=date(2026, 7, 1),
+        source_system="ops",
+        event_type="shipment_created",
+        entity_id="500",
+        payload={"shipment_id": 500, "order_id": 100},
+    )
+
+    events = planner.plan(
+        date(2026, 7, 10), [_order(), shipment], {100}, {100}, set(), FulfillmentSnapshot(501)
+    )
+
+    delivery = next(event for event in events if event.event_type == "shipment_delivered")
+    assert delivery.payload["shipment_id"] == 500
+    assert 1 <= delivery.payload["shipment_to_delivery_delay_days"] <= 5

@@ -58,6 +58,7 @@ class DailySourceReconciler:
             problems = self._missing_markers(cursor, "Ops", events)
             problems.extend(self._missing_key_problems(cursor, "ops.orders", "order_id", events, "order_created", "order_id"))
             problems.extend(self._missing_key_problems(cursor, "ops.shipments", "shipment_id", events, "shipment_created", "shipment_id"))
+            problems.extend(self._delivered_shipment_problems(cursor, events))
             problems.extend(self._missing_key_problems(cursor, "ops.invoices", "order_id", events, "invoice_created", "order_id"))
             return problems
         finally:
@@ -110,3 +111,21 @@ class DailySourceReconciler:
         actual = {int(row[0]) for row in cursor.fetchall()}
         missing = sorted(set(ids) - actual)
         return [f"{table} {column} values missing: {', '.join(map(str, missing))}"] if missing else []
+
+    @staticmethod
+    def _delivered_shipment_problems(cursor: Any, events: Iterable[SourceEvent]) -> list[str]:
+        shipment_ids = [
+            int(event.payload["shipment_id"])
+            for event in events
+            if event.event_type == "shipment_delivered"
+        ]
+        if not shipment_ids:
+            return []
+        cursor.execute(
+            "SELECT shipment_id FROM ops.shipments "
+            "WHERE shipment_id = ANY(%s) AND delivered_date IS NOT NULL",
+            [shipment_ids],
+        )
+        actual = {int(row[0]) for row in cursor.fetchall()}
+        missing = sorted(set(shipment_ids) - actual)
+        return [f"ops.shipments delivered shipment_id values missing: {', '.join(map(str, missing))}"] if missing else []

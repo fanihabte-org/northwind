@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import timedelta
+from datetime import date, timedelta
 from typing import Any, Iterable, Protocol
 
 from simulator.events import SourceEvent
@@ -155,7 +155,7 @@ class OpsEventApplier:
             if existing[0] != order_id:
                 raise RuntimeError(f"shipment ID collision for {shipment_id}")
             return
-        cursor.execute("SELECT status FROM ops.orders WHERE order_id = %s", [order_id])
+        cursor.execute("SELECT status, order_date FROM ops.orders WHERE order_id = %s", [order_id])
         order = cursor.fetchone()
         if order is None:
             raise RuntimeError(f"shipment requires existing order {order_id}")
@@ -179,9 +179,32 @@ class OpsEventApplier:
              f"{ship_date.isoformat()} 08:00:00", f"{ship_date.isoformat()} 17:00:00"],
         )
         if order[0] == "PENDING":
+            order_created_date = date.fromisoformat(
+                str(payload.get("order_created_date", order[1]))
+            )
+            transition_time = f"{ship_date.isoformat()} 08:00:00"
+            sla_due_at = f"{(order_created_date + timedelta(days=5)).isoformat()} 08:00:00"
+            sla_status = "BREACHED" if ship_date > order_created_date + timedelta(days=5) else "ON_TIME"
+            cursor.execute(
+                """
+                INSERT INTO ops.order_status_history (
+                    order_id, previous_status, new_status, occurred_at, recorded_at,
+                    source_event_id, sla_due_at, sla_status, anomaly_type
+                ) VALUES (%s, 'PENDING', 'SHIPPED', %s, %s, %s, %s, %s, %s)
+                """,
+                [
+                    order_id,
+                    transition_time,
+                    transition_time,
+                    event.event_id,
+                    sla_due_at,
+                    sla_status,
+                    event.anomaly_type,
+                ],
+            )
             cursor.execute(
                 "UPDATE ops.orders SET status = 'SHIPPED', updated_at = %s WHERE order_id = %s",
-                [f"{ship_date.isoformat()} 08:00:00", order_id],
+                [transition_time, order_id],
             )
 
     def _apply_invoice(self, cursor: Cursor, event: SourceEvent) -> None:

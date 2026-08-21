@@ -7,10 +7,12 @@ from simulator.ops_apply import OpsEventApplier
 class RecordingCursor:
     def __init__(self) -> None:
         self.queries: list[str] = []
+        self.parameters: list[object] = []
         self.responses = iter([None, None, None, (1, 100.0, 55.0), (900,), None])
 
     def execute(self, query, parameters=None):
         self.queries.append(query)
+        self.parameters.append(parameters)
 
     def fetchone(self):
         return next(self.responses)
@@ -44,15 +46,29 @@ def test_ops_applier_applies_shipment_and_invoice_lifecycle_events() -> None:
         source_system="ops",
         event_type="shipment_created",
         entity_id="500",
-        payload={"shipment_id": 500, "order_id": 100},
+        payload={
+            "shipment_id": 500,
+            "order_id": 100,
+            "order_created_date": "2026-07-24",
+        },
     )
     shipment_cursor = RecordingCursor()
-    shipment_cursor.responses = iter([None, None, ("PENDING",), ("WH-SEA",), ("UPS",)])
+    shipment_cursor.responses = iter(
+        [None, None, ("PENDING", date(2026, 7, 24)), ("WH-SEA",), ("UPS",)]
+    )
 
     assert OpsEventApplier().apply(shipment_cursor, [shipment]) == 1
     shipment_statements = "\n".join(shipment_cursor.queries)
     assert "INSERT INTO ops.shipments" in shipment_statements
+    assert "INSERT INTO ops.order_status_history" in shipment_statements
+    assert "'PENDING', 'SHIPPED'" in shipment_statements
     assert "status = 'SHIPPED'" in shipment_statements
+    history_parameters = next(
+        parameters
+        for query, parameters in zip(shipment_cursor.queries, shipment_cursor.parameters)
+        if "INSERT INTO ops.order_status_history" in query
+    )
+    assert history_parameters[4:] == ["2026-07-29 08:00:00", "ON_TIME", None]
 
     invoice = SourceEvent.create(
         business_date=date(2026, 7, 29),

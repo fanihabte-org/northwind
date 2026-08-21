@@ -178,11 +178,26 @@ class OpsEventApplier:
              ship_date + timedelta(days=4), f"SIM-{shipment_id:012d}",
              f"{ship_date.isoformat()} 08:00:00", f"{ship_date.isoformat()} 17:00:00"],
         )
+        transition_time = f"{ship_date.isoformat()} 08:00:00"
+        cursor.execute(
+            """
+            INSERT INTO ops.shipment_status_history (
+                shipment_id, previous_status, new_status, occurred_at, recorded_at,
+                source_event_id, sla_due_at, sla_status, anomaly_type
+            ) VALUES (%s, NULL, 'SHIPPED', %s, %s, %s, NULL, 'ON_TIME', %s)
+            """,
+            [
+                shipment_id,
+                transition_time,
+                transition_time,
+                event.event_id,
+                event.anomaly_type,
+            ],
+        )
         if order[0] == "PENDING":
             order_created_date = date.fromisoformat(
                 str(payload.get("order_created_date", order[1]))
             )
-            transition_time = f"{ship_date.isoformat()} 08:00:00"
             sla_due_at = f"{(order_created_date + timedelta(days=5)).isoformat()} 08:00:00"
             sla_status = "BREACHED" if ship_date > order_created_date + timedelta(days=5) else "ON_TIME"
             cursor.execute(

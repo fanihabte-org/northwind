@@ -10,6 +10,7 @@ from typing import Any, Protocol
 from simulator.ops import OpsDailyPlanner, OpsSnapshot
 from simulator.ops_apply import OpsEventApplier
 from simulator.fulfillment import FulfillmentPlanner, FulfillmentSnapshot
+from simulator.support import SupportCasePlanner, SupportSnapshot
 from simulator.state import SimulationStateError, SimulationStateStore
 
 
@@ -35,12 +36,14 @@ class OpsRun:
         state: SimulationStateStore,
         planner: OpsDailyPlanner,
         fulfillment_planner: FulfillmentPlanner,
+        support_case_planner: SupportCasePlanner,
         applier: OpsEventApplier,
         connection_factory: Callable[[], Connection],
     ) -> None:
         self.state = state
         self.planner = planner
         self.fulfillment_planner = fulfillment_planner
+        self.support_case_planner = support_case_planner
         self.applier = applier
         self.connection_factory = connection_factory
 
@@ -63,10 +66,12 @@ class OpsRun:
         all_ops_events = self.state.events_through(run_date, "ops")
         fulfillment = self._plan_fulfillment(run_date, all_ops_events)
         self.state.record_events(fulfillment)
+        support_cases = self._plan_support_cases(run_date, self.state.events_through(run_date, "ops"))
+        self.state.record_events(support_cases)
         fulfillment_events = [
             event
             for event in self.state.events_for(run_date, "ops")
-            if event.event_type in {"shipment_created", "shipment_delivered", "invoice_created"}
+            if event.event_type in {"shipment_created", "shipment_delivered", "invoice_created", "support_case_opened"}
         ]
         applied += self._apply(fulfillment_events)
         records = len(self.state.events_for(run_date, "ops"))
@@ -120,6 +125,17 @@ class OpsRun:
             )
             delivered = {row[0] for row in cursor.fetchall()}
             return snapshot, shipped, invoiced, delivered
+        finally:
+            connection.close()
+
+    def _plan_support_cases(self, run_date: date, ops_events: list[Any]) -> list[Any]:
+        connection = self.connection_factory()
+        try:
+            cursor = connection.cursor()
+            cursor.execute("SELECT coalesce(max(case_id), 0) + 1 FROM ops.support_cases")
+            return self.support_case_planner.plan(
+                run_date, ops_events, SupportSnapshot(cursor.fetchone()[0])
+            )
         finally:
             connection.close()
 

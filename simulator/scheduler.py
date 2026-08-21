@@ -24,6 +24,7 @@ from simulator.ops import OpsDailyPlanner
 from simulator.ops_apply import OpsEventApplier
 from simulator.ops_run import OpsRun
 from simulator.policy import SimulationPolicy
+from simulator.support import SupportCasePlanner
 from simulator.reconciliation import DailySourceReconciler
 from simulator.state import SimulationStateError, SimulationStateStore
 
@@ -93,6 +94,7 @@ def build_runner(
         state,
         OpsDailyPlanner(policy),
         FulfillmentPlanner(policy),
+        SupportCasePlanner(policy),
         OpsEventApplier(),
         ops_factory,
     )

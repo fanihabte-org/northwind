@@ -60,6 +60,7 @@ class DailySourceReconciler:
             problems.extend(self._missing_key_problems(cursor, "ops.shipments", "shipment_id", events, "shipment_created", "shipment_id"))
             problems.extend(self._delivered_shipment_problems(cursor, events))
             problems.extend(self._missing_key_problems(cursor, "ops.invoices", "order_id", events, "invoice_created", "order_id"))
+            problems.extend(self._missing_key_problems(cursor, "ops.support_cases", "case_id", events, "support_case_opened", "case_id"))
             return problems
         finally:
             connection.close()

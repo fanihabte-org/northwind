@@ -39,7 +39,7 @@ class OpsEventApplier:
 
     @staticmethod
     def _event_priority(event: SourceEvent) -> int:
-        return {"order_created": 0, "shipment_created": 1, "shipment_delivered": 2, "invoice_created": 3}.get(
+        return {"order_created": 0, "shipment_created": 1, "shipment_delivered": 2, "invoice_created": 3, "support_case_opened": 4}.get(
             event.event_type, 99
         )
 
@@ -52,6 +52,8 @@ class OpsEventApplier:
             self._apply_delivery(cursor, event)
         elif event.event_type == "invoice_created":
             self._apply_invoice(cursor, event)
+        elif event.event_type == "support_case_opened":
+            self._apply_support_case(cursor, event)
         else:
             raise ValueError(f"unsupported Ops event type: {event.event_type}")
 
@@ -340,3 +342,35 @@ class OpsEventApplier:
                 "UPDATE ops.orders SET status = 'INVOICED', updated_at = %s WHERE order_id = %s",
                 [transition_time, order_id],
             )
+
+    def _apply_support_case(self, cursor: Cursor, event: SourceEvent) -> None:
+        payload = event.payload
+        case_id = int(payload["case_id"])
+        cursor.execute("SELECT case_id FROM ops.support_cases WHERE case_id = %s", [case_id])
+        if cursor.fetchone() is not None:
+            return
+        cursor.execute("SELECT customer_id FROM ops.orders WHERE order_id = %s", [int(payload["order_id"])])
+        order = cursor.fetchone()
+        if order is None:
+            raise RuntimeError(f"support case requires order {payload['order_id']}")
+        opened_at = f"{event.business_date.isoformat()} 09:00:00"
+        cursor.execute(
+            """
+            INSERT INTO ops.support_cases (
+                case_id, customer_id, case_type, priority, channel, opened_at,
+                resolution_hours, status, csat_score, assigned_region, created_at, updated_at
+            ) VALUES (%s, %s, 'Delivery Issue', %s, 'Portal', %s,
+                      NULL, 'Open', NULL, 'NA-WEST', %s, %s)
+            """,
+            [case_id, order[0], payload["priority"], opened_at, opened_at, opened_at],
+        )
+        cursor.execute(
+            """
+            INSERT INTO ops.support_case_status_history (
+                case_id, previous_status, new_status, occurred_at, recorded_at,
+                source_event_id, sla_due_at, sla_status, anomaly_type
+            ) VALUES (%s, NULL, 'Open', %s, %s, %s, %s, 'ON_TIME', %s)
+            """,
+            [case_id, opened_at, opened_at, event.event_id,
+             f"{(event.business_date + timedelta(days=3)).isoformat()} 09:00:00", event.anomaly_type],
+        )

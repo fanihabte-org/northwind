@@ -7,6 +7,7 @@ from simulator.ops_run import OpsRun
 from simulator.fulfillment import FulfillmentPlanner
 from simulator.policy import SimulationPolicy
 from simulator.state import SimulationStateStore
+from simulator.support import SupportCasePlanner
 
 
 class Cursor:
@@ -74,15 +75,17 @@ def test_ops_run_plans_and_applies_due_order_after_crm(tmp_path) -> None:
     snapshot_connection = Connection([(100,), []])
     apply_connection = Connection([None, None, None, (1, 100.0, 55.0), (900,)])
     fulfillment_snapshot_connection = Connection([(500,), [], [], []])
+    support_snapshot_connection = Connection([(900,)])
     fulfillment_apply_connection = Connection([])
     connections = iter([
         snapshot_connection,
         apply_connection,
         fulfillment_snapshot_connection,
+        support_snapshot_connection,
         fulfillment_apply_connection,
     ])
     result = OpsRun(
-        store, OpsDailyPlanner(policy), FulfillmentPlanner(policy), OpsEventApplier(), lambda: next(connections)
+        store, OpsDailyPlanner(policy), FulfillmentPlanner(policy), SupportCasePlanner(policy), OpsEventApplier(), lambda: next(connections)
     ).run(run_date, seed=1)
 
     assert result.records == result.applied == 1
@@ -90,5 +93,5 @@ def test_ops_run_plans_and_applies_due_order_after_crm(tmp_path) -> None:
     assert apply_connection.committed
     assert all(
         connection.closed
-        for connection in (snapshot_connection, apply_connection, fulfillment_snapshot_connection, fulfillment_apply_connection)
+        for connection in (snapshot_connection, apply_connection, fulfillment_snapshot_connection, support_snapshot_connection, fulfillment_apply_connection)
     )

@@ -138,3 +138,18 @@ def test_ops_applier_marks_shipment_delivered_and_records_history() -> None:
         if "INSERT INTO ops.shipment_status_history" in query
     )
     assert history_parameters[4:] == ["2026-08-01 17:00:00", "BREACHED", None]
+
+
+def test_ops_applier_creates_support_case_and_records_initial_history() -> None:
+    event = SourceEvent.create(
+        business_date=date(2026, 8, 2), source_system="ops", event_type="support_case_opened",
+        entity_id="900", payload={"case_id": 900, "order_id": 100, "shipment_id": 500, "priority": "P3"},
+    )
+    cursor = RecordingCursor()
+    cursor.responses = iter([None, None, (10,)])
+
+    assert OpsEventApplier().apply(cursor, [event]) == 1
+    statements = "\n".join(cursor.queries)
+    assert "INSERT INTO ops.support_cases" in statements
+    assert "INSERT INTO ops.support_case_status_history" in statements
+    assert "NULL, 'Open'" in statements

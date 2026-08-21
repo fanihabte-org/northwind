@@ -334,6 +334,24 @@ account number.
 by carrier, lane, service level and season, and the carrier mix is not constant across
 the window.
 
+### `ops.shipment_status_history`
+**Grain:** one immutable lifecycle transition per shipment, for shipments created
+after lifecycle history is enabled. The current `ops.shipments` row remains the
+latest operational view; this table preserves its state changes.
+
+| Column | Type | Null | Description |
+|---|---|---|---|
+| `shipment_status_event_id` | BIGINT | no | Identity primary key. |
+| `shipment_id` | BIGINT | no | FK to `ops.shipments`. |
+| `previous_status` | VARCHAR(20) | yes | `NULL` for initial `SHIPPED`; otherwise `SHIPPED`. |
+| `new_status` | VARCHAR(20) | no | `SHIPPED` or `DELIVERED`. Only `SHIPPED → DELIVERED` is permitted after creation. |
+| `occurred_at` | TIMESTAMP | no | Causal business timestamp of the hand-off or delivery. |
+| `recorded_at` | TIMESTAMP | no | Source transaction timestamp when the event was persisted. |
+| `source_event_id` | VARCHAR(64) | no | Unique deterministic simulator event ID. |
+| `sla_due_at` | TIMESTAMP | yes | Delivery commitment for a `DELIVERED` transition; `NULL` at shipment creation. |
+| `sla_status` | VARCHAR(10) | no | `ON_TIME` or `BREACHED`. |
+| `anomaly_type` | VARCHAR(80) | yes | Controlled exception associated with the transition. |
+
 ---
 
 ### `ops.invoices`

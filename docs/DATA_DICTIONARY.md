@@ -158,6 +158,37 @@ source-delivery SLA breach. The delayed source data is published on the followin
 run and the simulation ledger records the cause. This creates a realistic,
 recoverable data-quality incident without making delayed data the norm.
 
+### Lifecycle-history contract
+
+Operational tables retain only the latest usable state of a record. Lifecycle
+history is recorded separately as immutable, append-only event rows; it does not
+replace the operational row or prevent its `updated_at` value from changing.
+
+History is owned by the source system that owns the lifecycle. Every history row
+uses the following common contract:
+
+| Field | Meaning |
+|---|---|
+| `occurred_at` | Local business timestamp at which the lifecycle transition took effect. |
+| `recorded_at` | Local source-system timestamp at which the transition was persisted. |
+| `source_event_id` | Deterministic simulator event identifier; unique within its history table. |
+| `previous_state` | State before the transition; `NULL` only for an initial creation event. |
+| `new_state` | State after the transition. |
+| `sla_due_at` | Latest permitted business timestamp calculated from the causal upstream event. |
+| `sla_status` | `ON_TIME` or `BREACHED`, determined from `occurred_at` and `sla_due_at`. |
+| `anomaly_type` | Controlled exception that explains a non-normal outcome, when applicable. |
+
+`occurred_at` is derived from the planned causal event and its business date, never
+from the wall-clock time at which a container happens to run. `recorded_at` is
+written in the same source-database transaction as the current-state update.
+
+Existing seed records are a baseline current snapshot: the system will not invent
+transitions that are not present in the source data. History begins with newly
+simulated lifecycle events after the feature is deployed.
+
+Dimension/master tables remain current-state only; no SCD or dimensional-history
+tables are created for this dataset.
+
 ---
 
 ## 3. Table reference

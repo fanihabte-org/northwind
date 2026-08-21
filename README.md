@@ -5,7 +5,7 @@ want. Built to be worked on: extract it, model it, analyse it, forecast it.
 
 | Source | Stands in for | Access |
 |---|---|---|
-| **FakeForce** `localhost:8080` | Salesforce | REST + OAuth + SOQL, with pagination, rate limits, a recycle bin and controllable failures |
+| **FakeForce** `localhost:8081` | Salesforce | REST + OAuth + SOQL, with pagination, rate limits, a recycle bin and controllable failures |
 | **`ops`** `localhost:5433` | SQL Server order management | Separate Postgres database — customers, catalogue, orders, fulfilment, support |
 | **`erp`** `localhost:5434` | ERP finance | Separate Postgres database — entities, cost centres, GL, FX, the revenue ledger |
 | **`analytics`** `localhost:5435` | Redshift | `rev_engine_pipeline` warehouse database. `metadata` contains source-contract versions; business models are yours to design. |
@@ -72,12 +72,12 @@ state, and Bulk Query CSV artifacts outside the Git checkout. See
 Smoke test:
 
 ```bash
-TOKEN=$(curl -s -X POST localhost:8080/services/oauth2/token \
+TOKEN=$(curl -s -X POST localhost:8081/services/oauth2/token \
   -d grant_type=client_credentials -d client_id=demo -d client_secret=demo \
   | python3 -c 'import sys,json;print(json.load(sys.stdin)["access_token"])')
 
 curl -s -H "Authorization: Bearer $TOKEN" \
-  --get localhost:8080/services/data/v60.0/query \
+  --get localhost:8081/services/data/v60.0/query \
   --data-urlencode "q=SELECT Id, Name, AccountNumber FROM Account LIMIT 3"
 ```
 
@@ -247,7 +247,7 @@ default `page_size` of 2000 and `rate_limit_per_min` of 120, 8.8M opportunities 
 4,400 requests and over half an hour of 429 backoff. Raise both for bulk work:
 
 ```bash
-curl -s -X POST localhost:8080/_chaos -H 'content-type: application/json' \
+curl -s -X POST localhost:8081/_chaos -H 'content-type: application/json' \
   -d '{"page_size": 50000, "rate_limit_per_min": 100000}'
 ```
 
@@ -302,11 +302,11 @@ rejected and a correction must be a new `CRN` or `ADJ` entry.
 ### Breaking it on purpose
 
 ```bash
-curl -s localhost:8080/_chaos                       # current settings
-curl -s -X POST localhost:8080/_chaos/reset         # behave
-curl -s -X POST localhost:8080/_chaos/outage -d '{"seconds": 120}'
+curl -s localhost:8081/_chaos                       # current settings
+curl -s -X POST localhost:8081/_chaos/reset         # behave
+curl -s -X POST localhost:8081/_chaos/outage -d '{"seconds": 120}'
 
-curl -s -X POST localhost:8080/_chaos -H 'content-type: application/json' -d '{
+curl -s -X POST localhost:8081/_chaos -H 'content-type: application/json' -d '{
   "error_rate":         0.30,        # retryable 503s
   "bad_request_rate":   0.05,        # non-retryable 400s
   "latency_ms":         500,

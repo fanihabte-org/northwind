@@ -35,6 +35,9 @@ def test_compose_uses_distinct_ops_and_erp_databases() -> None:
     assert 'ports: ["5436:5432"]' in compose
     assert "  crm:\n" in compose
     assert 'northwind_crm:/var/lib/postgresql/data' in compose
+    fakeforce = compose.split("  fakeforce:\n", 1)[1].split("  simulator:\n", 1)[0]
+    assert 'ports: ["8081:8080"]' in fakeforce
+    assert "restart: unless-stopped" in fakeforce
     assert "  simulator:\n" in compose
     assert "SIMULATION_BASELINE_DATE" in compose
     assert "SIMULATION_DUCKDB_MEMORY_LIMIT" in compose

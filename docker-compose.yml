@@ -107,7 +107,9 @@ services:
 
   fakeforce:
     build: ./fakeforce
-    ports: ["8080:8080"]
+    # Airflow owns host port 8080 on the production server. Fakeforce remains
+    # on port 8080 inside its container, but is exposed to host clients on 8081.
+    ports: ["8081:8080"]
     volumes:
       # Source datasets are machine-owned data, not checkout contents. The
       # relative defaults preserve local developer and CI compatibility.
@@ -122,6 +124,9 @@ services:
     # Sources are scanned lazily by DuckDB. The persistent state volume also
     # receives spill files, cursor indexes, durable jobs, and Bulk results.
     shm_size: 256m
+    # Recover automatically after a host or Docker restart. A deliberate
+    # `docker compose stop fakeforce` still leaves it stopped.
+    restart: unless-stopped
     environment:
       FAKEFORCE_SEED_DIR: /app/seed
       FAKEFORCE_DATA_ROOTS: /app/seed:/app/state/simulation/crm

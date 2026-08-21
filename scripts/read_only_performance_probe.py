@@ -10,7 +10,7 @@ from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
 
-BASE_URL = os.getenv("PERF_BASE_URL", "http://localhost:8080").rstrip("/")
+BASE_URL = os.getenv("PERF_BASE_URL", "http://localhost:8081").rstrip("/")
 OUTPUT = Path(os.getenv("PERF_OUTPUT", "performance-report.json"))
 
 

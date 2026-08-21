@@ -36,7 +36,7 @@ jobs:
           mkdir -p "$FAKEFORCE_EXPORTS_DIR" "$FAKEFORCE_STATE_DIR"
           docker compose up -d --build fakeforce
           for attempt in $(seq 1 60); do
-            curl --fail --silent http://localhost:8080/health && exit 0
+            curl --fail --silent http://localhost:8081/health && exit 0
             sleep 5
           done
           docker compose logs --no-color fakeforce

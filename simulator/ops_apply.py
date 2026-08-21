@@ -102,6 +102,22 @@ class OpsEventApplier:
                 f"{order_date.isoformat()} 08:00:00",
             ],
         )
+        transition_time = f"{order_date.isoformat()} 08:00:00"
+        cursor.execute(
+            """
+            INSERT INTO ops.order_status_history (
+                order_id, previous_status, new_status, occurred_at, recorded_at,
+                source_event_id, sla_due_at, sla_status, anomaly_type
+            ) VALUES (%s, NULL, 'PENDING', %s, %s, %s, NULL, 'ON_TIME', %s)
+            """,
+            [
+                order_id,
+                transition_time,
+                transition_time,
+                event.event_id,
+                event.anomaly_type,
+            ],
+        )
         cursor.execute(
             "SELECT product_id, list_price_usd, standard_cost_usd FROM ops.products ORDER BY product_id LIMIT 1"
         )

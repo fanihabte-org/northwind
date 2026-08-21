@@ -15,6 +15,10 @@ def test_ops_and_erp_have_independent_schema_scripts() -> None:
     assert "CONSTRAINT pk_orders PRIMARY KEY" in ops
     assert "CONSTRAINT fk_invoices_order FOREIGN KEY" in ops
     assert "CREATE TABLE IF NOT EXISTS erp.revenue_postings" in erp
+    order_history = (ROOT / "sql" / "migrations" / "ops" / "005_add_order_status_history.sql").read_text()
+    assert "REFERENCES erp." not in order_history
+    assert "FOREIGN KEY (order_id) REFERENCES ops.orders" in order_history
+    assert "UNIQUE (source_event_id)" in order_history
     assert "CREATE TABLE IF NOT EXISTS simulation.applied_events" in erp
     assert "REFERENCES ops." not in erp
     assert "CONSTRAINT fk_postings_co FOREIGN KEY" in erp

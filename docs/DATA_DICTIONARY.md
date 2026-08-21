@@ -408,6 +408,24 @@ latest operational view; this table retains `ISSUED` and any later `VOID` event.
 | `created_at` | TIMESTAMP | no | When the support record was created. For generated history it equals `opened_at`. |
 | `updated_at` | TIMESTAMP | no | Last case-state update; resolved and closed historical cases advance it through their resolution time. |
 
+### `ops.support_case_status_history`
+**Grain:** one immutable lifecycle transition per support case, beginning with
+newly simulated cases after lifecycle history is enabled. The `ops.support_cases`
+row remains the current operational view.
+
+| Column | Type | Null | Description |
+|---|---|---|---|
+| `support_case_status_event_id` | BIGINT | no | Identity primary key. |
+| `case_id` | BIGINT | no | FK to `ops.support_cases`. |
+| `previous_status` | VARCHAR(20) | yes | `NULL` for initial `Open`; otherwise `Open` or `Resolved`. |
+| `new_status` | VARCHAR(20) | no | `Open`, `Resolved`, or `Closed`. Allowed path is `Open → Resolved → Closed`. |
+| `occurred_at` | TIMESTAMP | no | Causal business timestamp of creation, resolution, or closure. |
+| `recorded_at` | TIMESTAMP | no | Source transaction timestamp when the event was persisted. |
+| `source_event_id` | VARCHAR(64) | no | Unique deterministic simulator event ID. |
+| `sla_due_at` | TIMESTAMP | yes | Expected response or resolution timestamp based on case priority. |
+| `sla_status` | VARCHAR(10) | no | `ON_TIME` or `BREACHED`. |
+| `anomaly_type` | VARCHAR(80) | yes | Controlled exception associated with the transition. |
+
 ---
 
 ### `erp.companies`

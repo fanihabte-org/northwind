@@ -83,6 +83,7 @@ def test_discovery_reads_the_independent_versioned_source_chains() -> None:
         "005_add_order_status_history.sql",
         "006_add_shipment_status_history.sql",
         "007_add_invoice_status_history.sql",
+        "008_add_support_case_status_history.sql",
     ]
     assert [migration.filename for migration in erp] == [
         "001_initial_schema.sql",
@@ -104,6 +105,9 @@ def test_discovery_reads_the_independent_versioned_source_chains() -> None:
     assert "CREATE TABLE IF NOT EXISTS ops.invoice_status_history" in ops[6].sql
     assert "CONSTRAINT uq_invoice_status_history_event UNIQUE (source_event_id)" in ops[6].sql
     assert "CONSTRAINT ck_invoice_history_transition CHECK" in ops[6].sql
+    assert "CREATE TABLE IF NOT EXISTS ops.support_case_status_history" in ops[7].sql
+    assert "CONSTRAINT uq_support_case_status_history_event UNIQUE (source_event_id)" in ops[7].sql
+    assert "CONSTRAINT ck_support_case_history_transition CHECK" in ops[7].sql
     assert "CREATE TABLE IF NOT EXISTS erp.revenue_postings" in erp[0].sql
     assert "ADD COLUMN IF NOT EXISTS created_at" in erp[1].sql
     assert "simulation.audit_backfill_progress" in erp[2].sql

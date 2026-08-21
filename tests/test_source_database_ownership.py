@@ -27,6 +27,10 @@ def test_ops_and_erp_have_independent_schema_scripts() -> None:
     assert "REFERENCES erp." not in invoice_history
     assert "FOREIGN KEY (invoice_id) REFERENCES ops.invoices" in invoice_history
     assert "UNIQUE (source_event_id)" in invoice_history
+    case_history = (ROOT / "sql" / "migrations" / "ops" / "008_add_support_case_status_history.sql").read_text()
+    assert "REFERENCES erp." not in case_history
+    assert "FOREIGN KEY (case_id) REFERENCES ops.support_cases" in case_history
+    assert "UNIQUE (source_event_id)" in case_history
     assert "CREATE TABLE IF NOT EXISTS simulation.applied_events" in erp
     assert "REFERENCES ops." not in erp
     assert "CONSTRAINT fk_postings_co FOREIGN KEY" in erp

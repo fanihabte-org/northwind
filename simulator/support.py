@@ -39,7 +39,7 @@ class SupportCasePlanner:
             and self._opens_case(event)
             and event.business_date + timedelta(days=self._opening_delay(event)) <= run_date
         ]
-        return [
+        openings = [
             SourceEvent.create(
                 business_date=run_date,
                 source_system="ops",
@@ -54,6 +54,25 @@ class SupportCasePlanner:
             )
             for offset, delivery in enumerate(sorted(eligible, key=lambda event: event.event_id))
         ]
+        resolved_case_ids = {
+            int(event.payload["case_id"])
+            for event in events
+            if event.event_type == "support_case_resolved"
+        }
+        resolutions = []
+        for opening in [*events, *openings]:
+            if opening.event_type != "support_case_opened":
+                continue
+            case_id = int(opening.payload["case_id"])
+            if case_id in resolved_case_ids:
+                continue
+            if opening.business_date + timedelta(days=self._resolution_delay(opening)) > run_date:
+                continue
+            resolutions.append(SourceEvent.create(
+                business_date=run_date, source_system="ops", event_type="support_case_resolved",
+                entity_id=str(case_id), payload={"case_id": case_id, "priority": opening.payload["priority"]},
+            ))
+        return openings + resolutions
 
     @staticmethod
     def _opens_case(delivery: SourceEvent) -> bool:
@@ -62,3 +81,7 @@ class SupportCasePlanner:
     @staticmethod
     def _opening_delay(delivery: SourceEvent) -> int:
         return 1 + hashlib.sha256(f"support-delay:{delivery.event_id}".encode()).digest()[0] % 7
+
+    @staticmethod
+    def _resolution_delay(opening: SourceEvent) -> int:
+        return 1 + hashlib.sha256(f"support-resolution:{opening.event_id}".encode()).digest()[0] % 3

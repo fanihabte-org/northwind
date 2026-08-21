@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date, datetime
 
 from simulator.events import SourceEvent
 from simulator.ops_apply import OpsEventApplier
@@ -153,3 +153,24 @@ def test_ops_applier_creates_support_case_and_records_initial_history() -> None:
     assert "INSERT INTO ops.support_cases" in statements
     assert "INSERT INTO ops.support_case_status_history" in statements
     assert "NULL, 'Open'" in statements
+
+
+def test_ops_applier_resolves_support_case_and_records_history() -> None:
+    event = SourceEvent.create(
+        business_date=date(2026, 8, 4), source_system="ops", event_type="support_case_resolved",
+        entity_id="900", payload={"case_id": 900, "priority": "P3"},
+    )
+    cursor = RecordingCursor()
+    cursor.responses = iter([None, ("Open", datetime(2026, 8, 2, 9, 0))])
+
+    assert OpsEventApplier().apply(cursor, [event]) == 1
+    statements = "\n".join(cursor.queries)
+    assert "SET status = 'Resolved', resolution_hours = %s, updated_at = %s" in statements
+    assert "INSERT INTO ops.support_case_status_history" in statements
+    assert "'Open', 'Resolved'" in statements
+    history_parameters = next(
+        parameters
+        for query, parameters in zip(cursor.queries, cursor.parameters)
+        if "INSERT INTO ops.support_case_status_history" in query
+    )
+    assert history_parameters[4:6] == [datetime(2026, 8, 5, 9, 0), "ON_TIME"]

@@ -9,6 +9,12 @@ readonly THROUGH_DATE="2026-08-24"
 readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 readonly EXPORTS_DIR="$(mktemp -d "${TMPDIR:-/tmp}/northwind-fakeforce-exports.XXXXXX")"
 
+if [[ -x "$ROOT_DIR/.venv/bin/python" ]]; then
+  readonly PYTHON_BIN="${NORTHWIND_PYTHON_BIN:-$ROOT_DIR/.venv/bin/python}"
+else
+  readonly PYTHON_BIN="${NORTHWIND_PYTHON_BIN:-python3}"
+fi
+
 compose() {
   docker compose --project-directory "$ROOT_DIR" --project-name "$PROJECT_NAME" "$@"
 }
@@ -36,7 +42,7 @@ compose up -d ops erp migrations
 compose wait migrations
 
 # The loader is intentionally one-time and runs after migrations have completed.
-python generator/load.py
+"$PYTHON_BIN" generator/load.py
 
 # Run an actual containerized catch-up, including the durable simulation state
 # and cross-system reconciliation. The end date leaves enough days for CRM

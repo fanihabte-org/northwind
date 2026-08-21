@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from typing import Any, Iterable, Protocol
 
 from simulator.events import SourceEvent
@@ -39,7 +39,7 @@ class OpsEventApplier:
 
     @staticmethod
     def _event_priority(event: SourceEvent) -> int:
-        return {"order_created": 0, "shipment_created": 1, "shipment_delivered": 2, "invoice_created": 3, "support_case_opened": 4}.get(
+        return {"order_created": 0, "shipment_created": 1, "shipment_delivered": 2, "invoice_created": 3, "support_case_opened": 4, "support_case_resolved": 5}.get(
             event.event_type, 99
         )
 
@@ -54,6 +54,8 @@ class OpsEventApplier:
             self._apply_invoice(cursor, event)
         elif event.event_type == "support_case_opened":
             self._apply_support_case(cursor, event)
+        elif event.event_type == "support_case_resolved":
+            self._apply_support_resolution(cursor, event)
         else:
             raise ValueError(f"unsupported Ops event type: {event.event_type}")
 
@@ -373,4 +375,31 @@ class OpsEventApplier:
             """,
             [case_id, opened_at, opened_at, event.event_id,
              f"{(event.business_date + timedelta(days=3)).isoformat()} 09:00:00", event.anomaly_type],
+        )
+
+    def _apply_support_resolution(self, cursor: Cursor, event: SourceEvent) -> None:
+        case_id = int(event.payload["case_id"])
+        cursor.execute("SELECT status, opened_at FROM ops.support_cases WHERE case_id = %s", [case_id])
+        case = cursor.fetchone()
+        if case is None:
+            raise RuntimeError(f"support resolution requires case {case_id}")
+        if case[0] != "Open":
+            return
+        opened_at = datetime.fromisoformat(str(case[1]))
+        occurred_at = f"{event.business_date.isoformat()} 17:00:00"
+        due_at = opened_at + timedelta(days=3)
+        resolution_hours = (datetime.fromisoformat(occurred_at) - opened_at).total_seconds() / 3600
+        sla_status = "BREACHED" if datetime.fromisoformat(occurred_at) > due_at else "ON_TIME"
+        cursor.execute(
+            "UPDATE ops.support_cases SET status = 'Resolved', resolution_hours = %s, updated_at = %s WHERE case_id = %s",
+            [resolution_hours, occurred_at, case_id],
+        )
+        cursor.execute(
+            """
+            INSERT INTO ops.support_case_status_history (
+                case_id, previous_status, new_status, occurred_at, recorded_at,
+                source_event_id, sla_due_at, sla_status, anomaly_type
+            ) VALUES (%s, 'Open', 'Resolved', %s, %s, %s, %s, %s, %s)
+            """,
+            [case_id, occurred_at, occurred_at, event.event_id, due_at, sla_status, event.anomaly_type],
         )

@@ -71,7 +71,7 @@ class OpsRun:
         fulfillment_events = [
             event
             for event in self.state.events_for(run_date, "ops")
-            if event.event_type in {"shipment_created", "shipment_delivered", "invoice_created", "support_case_opened"}
+            if event.event_type in {"shipment_created", "shipment_delivered", "invoice_created", "support_case_opened", "support_case_resolved"}
         ]
         applied += self._apply(fulfillment_events)
         records = len(self.state.events_for(run_date, "ops"))

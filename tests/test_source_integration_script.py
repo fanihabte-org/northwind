@@ -12,3 +12,5 @@ def test_source_integration_exercises_live_append_only_ledger_guards() -> None:
     assert "SQLSTATE '55000'" in script
     assert "'CRN'" in script
     assert "ROLLBACK;" in script
+    assert '"$PYTHON_BIN" generator/load.py' in script
+    assert "NORTHWIND_PYTHON_BIN" in script

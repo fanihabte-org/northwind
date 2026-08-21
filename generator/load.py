@@ -65,6 +65,48 @@ SYSTEMS = {
 
 BATCH = 250_000
 
+# Seed files generated before the audit-metadata migration deliberately do not
+# contain these columns.  Keep them loadable: production source tables enforce
+# NOT NULL audit fields before COPY, so the values must be derived while the
+# rows are still in a temporary staging table.  The expressions mirror the
+# checkpointed audit backfill and never overwrite values supplied by a newer
+# seed.
+LEGACY_AUDIT_EXPRESSIONS: dict[str, dict[str, str]] = {
+    "ops.products": {"created_at": "launch_date::timestamp + time '02:00'"},
+    "ops.warehouses": {
+        "created_at": "timestamp '2022-01-03 08:00:00'",
+        "updated_at": "timestamp '2022-01-03 08:00:00'",
+    },
+    "ops.carriers": {
+        "created_at": "timestamp '2022-01-03 08:00:00'",
+        "updated_at": "timestamp '2022-01-03 08:00:00'",
+    },
+    "ops.order_lines": {"created_at": "updated_at"},
+    "ops.shipments": {
+        "created_at": "ship_date::timestamp + time '08:00'",
+        "updated_at": "coalesce(delivered_date, ship_date)::timestamp + time '17:00'",
+    },
+    "ops.invoices": {"updated_at": "created_at"},
+    "ops.support_cases": {
+        "created_at": "opened_at",
+        "updated_at": "opened_at + coalesce(resolution_hours, 0) * interval '1 hour'",
+    },
+    "erp.companies": {
+        "created_at": "timestamp '2022-01-03 08:00:00'",
+        "updated_at": "timestamp '2022-01-03 08:00:00'",
+    },
+    "erp.cost_centers": {
+        "created_at": "valid_from::timestamp + time '08:00'",
+        "updated_at": "coalesce(valid_to, valid_from)::timestamp + time '17:00'",
+    },
+    "erp.gl_accounts": {
+        "created_at": "timestamp '2022-01-03 08:00:00'",
+        "updated_at": "timestamp '2022-01-03 08:00:00'",
+    },
+    "erp.fx_rates": {"created_at": "loaded_at", "updated_at": "loaded_at"},
+    "erp.revenue_postings": {"created_at": "posted_at"},
+}
+
 
 def find_seed(stem: str) -> Path:
     for suffix in (".csv.gz", ".csv", ".parquet"):
@@ -80,11 +122,13 @@ def _copy_sql(table: str, cols: list[str]) -> str:
     return f"COPY {table} ({quoted}) FROM STDIN WITH (FORMAT csv, NULL '', QUOTE '\"')"
 
 
-def copy_csv(cur, table: str, path: Path) -> int:
+def copy_csv(cur, table: str, path: Path, cols: list[str] | None = None) -> int:
     """Stream the file straight into COPY without materialising it."""
     opener = gzip.open if path.suffix == ".gz" else open
     with opener(path, "rt", encoding="utf-8") as fh:
-        cols = fh.readline().rstrip("\r\n").split(",")
+        cols = cols or fh.readline().rstrip("\r\n").split(",")
+        if cols and fh.tell() == 0:
+            fh.readline()
         n = 0
         with cur.copy(_copy_sql(table, cols)) as cp:
             while True:
@@ -96,7 +140,7 @@ def copy_csv(cur, table: str, path: Path) -> int:
     return n
 
 
-def copy_parquet(cur, table: str, path: Path) -> int:
+def copy_parquet(cur, table: str, path: Path, cols: list[str] | None = None) -> int:
     """Stream parquet row-group batches through COPY.
 
     Arrow writes nulls as empty fields, which is exactly what NULL '' expects,
@@ -106,7 +150,7 @@ def copy_parquet(cur, table: str, path: Path) -> int:
     from pyarrow import csv as pacsv
 
     pf = pq.ParquetFile(path)
-    cols = pf.schema_arrow.names
+    cols = cols or pf.schema_arrow.names
     opts = pacsv.WriteOptions(include_header=False)
     n = 0
     with cur.copy(_copy_sql(table, cols)) as cp:
@@ -118,11 +162,54 @@ def copy_parquet(cur, table: str, path: Path) -> int:
     return n
 
 
+def _target_columns(cur, table: str) -> list[str]:
+    schema, name = table.split(".", 1)
+    cur.execute(
+        """
+        SELECT column_name
+        FROM information_schema.columns
+        WHERE table_schema = %s AND table_name = %s
+        ORDER BY ordinal_position
+        """,
+        [schema, name],
+    )
+    return [row[0] for row in cur.fetchall()]
+
+
+def _copy_legacy_seed(cur, table: str, path: Path, seed_columns: list[str]) -> int:
+    target_columns = _target_columns(cur, table)
+    missing = set(target_columns) - set(seed_columns)
+    expressions = LEGACY_AUDIT_EXPRESSIONS.get(table, {})
+    unsupported = missing - set(expressions)
+    if unsupported:
+        raise ValueError(f"seed {path.name} is missing required columns for {table}: {sorted(unsupported)}")
+    if not missing:
+        return copy_parquet(cur, table, path, seed_columns) if path.suffix == ".parquet" else copy_csv(cur, table, path, seed_columns)
+
+    stage = "northwind_legacy_seed"
+    quoted_seed = ", ".join(f'"{column}"' for column in seed_columns)
+    cur.execute(f"CREATE TEMP TABLE {stage} AS SELECT {quoted_seed} FROM {table} WHERE false")
+    rows = copy_parquet(cur, stage, path, seed_columns) if path.suffix == ".parquet" else copy_csv(cur, stage, path, seed_columns)
+    selected = ", ".join(
+        f'"{column}"' if column in seed_columns else f'{expressions[column]} AS "{column}"'
+        for column in target_columns
+    )
+    quoted_target = ", ".join(f'"{column}"' for column in target_columns)
+    cur.execute(f"INSERT INTO {table} ({quoted_target}) SELECT {selected} FROM {stage}")
+    cur.execute(f"DROP TABLE {stage}")
+    return rows
+
+
 def copy_table(cur, table: str, stem: str) -> int:
     path = find_seed(stem)
     if path.suffix == ".parquet":
-        return copy_parquet(cur, table, path)
-    return copy_csv(cur, table, path)
+        import pyarrow.parquet as pq
+        columns = pq.ParquetFile(path).schema_arrow.names
+    else:
+        opener = gzip.open if path.suffix == ".gz" else open
+        with opener(path, "rt", encoding="utf-8") as fh:
+            columns = fh.readline().rstrip("\r\n").split(",")
+    return _copy_legacy_seed(cur, table, path, columns)
 
 
 def main() -> int:

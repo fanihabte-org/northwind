@@ -370,6 +370,24 @@ billing; this is the durable Ops hand-off to ERP, not an ERP ledger entry.
 | `created_at` | TIMESTAMP | no | Write timestamp for the operational record. |
 | `updated_at` | TIMESTAMP | no | Last operational invoice-record change. Initially equal to `created_at`; it is distinct from downstream ERP posting time. |
 
+### `ops.invoice_status_history`
+**Grain:** one immutable lifecycle transition per invoice, for invoices created
+after lifecycle history is enabled. The current `ops.invoices` row remains the
+latest operational view; this table retains `ISSUED` and any later `VOID` event.
+
+| Column | Type | Null | Description |
+|---|---|---|---|
+| `invoice_status_event_id` | BIGINT | no | Identity primary key. |
+| `invoice_id` | BIGINT | no | FK to `ops.invoices`. |
+| `previous_status` | VARCHAR(20) | yes | `NULL` for initial `ISSUED`; otherwise `ISSUED`. |
+| `new_status` | VARCHAR(20) | no | `ISSUED` or `VOID`. Only `ISSUED → VOID` is permitted after creation. |
+| `occurred_at` | TIMESTAMP | no | Causal business timestamp of issuance or voiding. |
+| `recorded_at` | TIMESTAMP | no | Source transaction timestamp when the event was persisted. |
+| `source_event_id` | VARCHAR(64) | no | Unique deterministic simulator event ID. |
+| `sla_due_at` | TIMESTAMP | yes | Latest permitted timestamp under the causal billing SLA. |
+| `sla_status` | VARCHAR(10) | no | `ON_TIME` or `BREACHED`. |
+| `anomaly_type` | VARCHAR(80) | yes | Controlled exception associated with the transition. |
+
 ---
 
 ### `ops.support_cases`

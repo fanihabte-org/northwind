@@ -33,6 +33,8 @@ def test_ops_applier_inserts_customer_order_line_and_event_marker() -> None:
     assert "INSERT INTO ops.customers" in statements
     assert "INSERT INTO ops.orders" in statements
     assert "INSERT INTO ops.order_lines" in statements
+    assert "INSERT INTO ops.order_status_history" in statements
+    assert "NULL, 'PENDING'" in statements
     assert "INSERT INTO simulation.applied_events" in statements
 
 

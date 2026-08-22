@@ -53,6 +53,27 @@ def test_catalog_rejects_files_outside_allowed_roots(tmp_path) -> None:
         DatasetCatalog.from_file(catalog_path, [allowed_root])
 
 
+def test_catalog_uses_declared_schema_when_base_source_is_absent(tmp_path) -> None:
+    data_root = tmp_path / "data"
+    data_root.mkdir()
+    catalog_path = tmp_path / "catalog.json"
+    write_catalog(
+        catalog_path,
+        [{
+            "name": "OpportunityHistory",
+            "sources": ["crm_opportunity_history.parquet"],
+            "schema": {"Id": "string", "StageName": "string"},
+            "soft_delete_field": None,
+        }],
+    )
+
+    spec = DatasetCatalog.from_file(catalog_path, [data_root]).get("OpportunityHistory")
+
+    assert spec is not None
+    assert spec.sources == ()
+    assert spec.schema.names == ["Id", "StageName"]
+
+
 def test_snapshot_id_changes_when_a_configured_source_changes(tmp_path) -> None:
     data_root = tmp_path / "data"
     data_root.mkdir()

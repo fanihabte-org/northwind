@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Iterator
 
 import duckdb
+import pyarrow as pa
 
 from fakeforce.catalog import DatasetCatalog, DatasetSpec
 from fakeforce.config import Settings
@@ -74,7 +75,7 @@ class DuckDBEngine:
     def _create_parquet_or_csv_view(
         self, conn: duckdb.DuckDBPyConnection, spec: DatasetSpec
     ) -> None:
-        reader = self._source_reader(spec.current_sources())
+        reader = self._source_reader(spec.current_sources(), spec.schema)
         if spec.compatibility_aliases:
             aliases = ", ".join(
                 f"{_quote_identifier(source)} AS {_quote_identifier(alias)}"
@@ -123,12 +124,35 @@ class DuckDBEngine:
                 )
 
     @staticmethod
-    def _source_reader(source_paths: tuple[Path, ...]) -> str:
+    def _source_reader(source_paths: tuple[Path, ...], schema: pa.Schema | None = None) -> str:
+        if not source_paths:
+            if schema is None:
+                raise ValueError("an empty source set requires a declared schema")
+            projection = ", ".join(
+                f"CAST(NULL AS {DuckDBEngine._duckdb_type(field.type)}) "
+                f"AS {_quote_identifier(field.name)}"
+                for field in schema
+            )
+            return f"(SELECT {projection} WHERE FALSE)"
         sources = ", ".join(_quote_literal(path) for path in source_paths)
         if all(path.name.endswith(".parquet") for path in source_paths):
             return f"read_parquet([{sources}], union_by_name = true)"
         if all(path.name.endswith((".csv", ".csv.gz")) for path in source_paths):
             return f"read_csv_auto([{sources}], header = true, union_by_name = true)"
-        raise ValueError(
-            "all configured sources must share a supported format"
-        )
+        raise ValueError("all configured sources must share a supported format")
+
+    @staticmethod
+    def _duckdb_type(data_type: pa.DataType) -> str:
+        if pa.types.is_string(data_type) or pa.types.is_large_string(data_type):
+            return "VARCHAR"
+        if pa.types.is_boolean(data_type):
+            return "BOOLEAN"
+        if pa.types.is_integer(data_type):
+            return "BIGINT"
+        if pa.types.is_floating(data_type):
+            return "DOUBLE"
+        if pa.types.is_date(data_type):
+            return "DATE"
+        if pa.types.is_timestamp(data_type):
+            return "TIMESTAMPTZ" if data_type.tz else "TIMESTAMP"
+        raise ValueError(f"unsupported declared Arrow type: {data_type}")

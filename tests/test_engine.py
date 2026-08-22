@@ -176,6 +176,26 @@ def test_engine_discovers_parquet_deltas_and_returns_only_latest_record(tmp_path
         assert conn.execute('SELECT "Name" FROM "ff_source_Account"').fetchall() == [("After",)]
 
 
+def test_engine_exposes_empty_declared_schema_when_history_base_is_absent(tmp_path) -> None:
+    data_root = tmp_path / "data"
+    data_root.mkdir()
+    catalog_path = tmp_path / "catalog.json"
+    catalog_path.write_text(json.dumps({"version": 1, "objects": [{
+        "name": "OpportunityHistory",
+        "sources": ["crm_opportunity_history.parquet"],
+        "schema": {"Id": "string", "StageName": "string"},
+        "soft_delete_field": None,
+    }]}))
+    settings = Settings.from_env({
+        "FAKEFORCE_SEED_DIR": str(data_root), "FAKEFORCE_DATA_ROOTS": str(data_root),
+        "FAKEFORCE_CATALOG_PATH": str(catalog_path), "FAKEFORCE_STATE_DIR": str(tmp_path / "state"),
+    })
+    catalog = DatasetCatalog.from_file(catalog_path, settings.data_roots)
+
+    with DuckDBEngine(settings, catalog).connection() as conn:
+        assert conn.execute('SELECT count(*) FROM "ff_source_OpportunityHistory"').fetchone() == (0,)
+
+
 def test_engine_exposes_all_immutable_opportunity_history_partitions(tmp_path) -> None:
     data_root = tmp_path / "data"
     data_root.mkdir()

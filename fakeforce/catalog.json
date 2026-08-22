@@ -32,6 +32,15 @@
     {
       "name": "OpportunityHistory",
       "sources": ["crm_opportunity_history.parquet"],
+      "schema": {
+        "Id": "string",
+        "OpportunityId": "string",
+        "PreviousStageName": "string",
+        "StageName": "string",
+        "CreatedDate": "string",
+        "CreatedById": "string",
+        "SystemModstamp": "string"
+      },
       "delta_patterns": ["opportunity_history/**/*.parquet"],
       "version_field": "SystemModstamp",
       "id_field": "Id",

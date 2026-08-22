@@ -21,6 +21,14 @@ class CatalogError(ValueError):
 
 _OBJECT_NAME = re.compile(r"^[A-Za-z][A-Za-z0-9_]*$")
 _SUPPORTED_SUFFIXES = (".parquet", ".csv", ".csv.gz")
+_DECLARED_FIELD_TYPES = {
+    "string": pa.string(),
+    "boolean": pa.bool_(),
+    "integer": pa.int64(),
+    "number": pa.float64(),
+    "date": pa.date32(),
+    "timestamp": pa.timestamp("us", tz="UTC"),
+}
 
 
 @dataclass(frozen=True)
@@ -80,6 +88,25 @@ class DatasetCatalog:
         return cls(objects)
 
     @staticmethod
+    def _declared_schema(value: Any, object_name: str) -> pa.Schema | None:
+        """Read an optional typed fallback for an unavailable base artifact."""
+        if value is None:
+            return None
+        if not isinstance(value, dict) or not value:
+            raise CatalogError(f"{object_name}: schema must be a non-empty field/type mapping")
+        fields: list[pa.Field] = []
+        for field_name, type_name in value.items():
+            if not isinstance(field_name, str) or not field_name:
+                raise CatalogError(f"{object_name}: schema field names must be non-empty strings")
+            if not isinstance(type_name, str) or type_name not in _DECLARED_FIELD_TYPES:
+                supported = ", ".join(sorted(_DECLARED_FIELD_TYPES))
+                raise CatalogError(
+                    f"{object_name}: unsupported schema type {type_name!r}; use one of {supported}"
+                )
+            fields.append(pa.field(field_name, _DECLARED_FIELD_TYPES[type_name]))
+        return pa.schema(fields)
+
+    @staticmethod
     def _parse_object(entry: Any, roots: tuple[Path, ...]) -> DatasetSpec:
         if not isinstance(entry, dict):
             raise CatalogError("catalog object entries must be objects")
@@ -90,14 +117,17 @@ class DatasetCatalog:
         configured_sources = entry.get("sources")
         if not isinstance(configured_sources, list) or not configured_sources:
             raise CatalogError(f"{name}: sources must be a non-empty list")
+        declared_schema = DatasetCatalog._declared_schema(entry.get("schema"), name)
         source_paths: list[Path] = []
         for configured_source in configured_sources:
             if not isinstance(configured_source, str):
                 raise CatalogError(f"{name}: source paths must be strings")
             matches = DatasetCatalog._expand_source(configured_source, roots)
-            if not matches:
+            if not matches and declared_schema is None:
                 raise CatalogError(f"{name}: source does not match a file: {configured_source}")
             source_paths.extend(matches)
+        if not source_paths and declared_schema is None:
+            raise CatalogError(f"{name}: source does not match a file: {configured_sources[0]}")
 
         id_field = entry.get("id_field", "Id")
         soft_delete_field = entry.get("soft_delete_field", "IsDeleted")
@@ -124,10 +154,15 @@ class DatasetCatalog:
             raise CatalogError(f"{name}: compatibility_aliases must map field names to source fields")
         if configured_deltas and not version_field:
             raise CatalogError(f"{name}: delta_patterns require version_field")
-        if configured_deltas and not all(path.name.endswith(".parquet") for path in source_paths):
+        if configured_deltas and source_paths and not all(
+            path.name.endswith(".parquet") for path in source_paths
+        ):
             raise CatalogError(f"{name}: Parquet delta patterns require Parquet base sources")
 
-        source_schema = DatasetCatalog._read_schema(source_paths[0])
+        source_schema = (
+            DatasetCatalog._read_schema(source_paths[0]) if source_paths else declared_schema
+        )
+        assert source_schema is not None
         names = set(source_schema.names)
         if id_field not in names:
             raise CatalogError(f"{name}: id field {id_field!r} is absent from source schema")

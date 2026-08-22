@@ -689,6 +689,18 @@ def generate(scale: float, fmt: str, out_dir: Path, seed: int) -> dict:
 
     emit("crm_accounts", accounts)
     emit("crm_opportunities", opportunities)
+    # Schema-bearing zero-row base for append-only CRM stage history. Daily
+    # simulator partitions supply the records; this file lets FakeForce expose
+    # the object before the first transition exists.
+    emit("crm_opportunity_history", pd.DataFrame({
+        "Id": pd.Series(dtype="string"),
+        "OpportunityId": pd.Series(dtype="string"),
+        "PreviousStageName": pd.Series(dtype="string"),
+        "StageName": pd.Series(dtype="string"),
+        "CreatedDate": pd.Series(dtype="string"),
+        "CreatedById": pd.Series(dtype="string"),
+        "SystemModstamp": pd.Series(dtype="string"),
+    }))
     del accounts, opportunities, opp_created_ts, opp_mod_ts, opp_amount, loss_reason
     T.lap("crm accounts + opps", n_opp + n_cust)
 

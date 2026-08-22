@@ -190,6 +190,15 @@ event identifiers for idempotency, and marks every inserted row
 `anomaly_type = 'inferred_baseline'`. Rows with simulator-recorded history are
 excluded. Inferred timestamps are estimates rather than source-recorded facts.
 
+For an `ops.orders` baseline row, the backfill always derives its initial
+`PENDING` event. `SHIPPED` and `INVOICED` current states receive a complete
+`PENDING → SHIPPED → INVOICED` chain, even if a legacy invoice row is absent;
+a valid shipment/invoice timestamp is preferred, otherwise the terminal
+transition uses `orders.updated_at` and is clamped not earlier than its prior
+inferred event or `created_at`. A `CANCELLED` row receives `PENDING →
+CANCELLED`, or `PENDING → SHIPPED → CANCELLED` where shipment evidence exists.
+These are history-only estimates and do not alter the order header.
+
 Dimension/master tables remain current-state only; no SCD or dimensional-history
 tables are created for this dataset.
 

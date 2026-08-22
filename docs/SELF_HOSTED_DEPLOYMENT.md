@@ -99,8 +99,13 @@ docker compose run --rm migrations python -m generator.history_validate
 ```
 
 Repeat `--apply --max-batches 1` until status is complete. Re-running is safe:
-checkpoints and deterministic event IDs prevent duplicates. Use the report to
-investigate invalid source chronology before continuing.
+checkpoints and deterministic event IDs prevent duplicates. Each dry-run batch
+reports `eligible`, `inferred`, `would_write`, and `skipped_invalid`; it does
+not write history rows or checkpoints. For baseline orders, `INVOICED` is
+inferred as a complete chain even when a legacy invoice row is absent, and
+`CANCELLED` gets a terminal cancellation event. Synthetic terminal timestamps
+come from `orders.updated_at`, clamped behind earlier inferred events. Use the
+report to investigate invalid source chronology before continuing.
 
 Use the migration image for low-cost operational snapshots; it reads catalog metadata
 and durable checkpoints rather than scanning large business tables:

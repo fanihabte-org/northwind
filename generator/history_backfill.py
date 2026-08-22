@@ -64,6 +64,15 @@ def _is_not_before(later: date | datetime, earlier: date | datetime) -> bool:
     return _business_date(later) >= _business_date(earlier)
 
 
+def _clamp_not_before(value: date | datetime, *floors: date | datetime) -> date | datetime:
+    """Keep a synthetic lifecycle timestamp at or after every prior event."""
+    clamped = value
+    for floor in floors:
+        if not _is_not_before(clamped, floor):
+            clamped = floor
+    return clamped
+
+
 class HistoryBackfill:
     def __init__(self, connection, batch_size: int = 10_000) -> None:
         if not 1 <= batch_size <= 100_000:
@@ -85,7 +94,7 @@ class HistoryBackfill:
         queries = {
             TARGETS[0].name: """
                 SELECT o.order_id, o.status, o.created_at, o.requested_delivery_date,
-                       s.ship_date, i.created_at
+                       s.ship_date, i.created_at, o.updated_at
                 FROM ops.orders o
                 LEFT JOIN ops.shipments s USING (order_id)
                 LEFT JOIN ops.invoices i USING (order_id)
@@ -137,29 +146,44 @@ class HistoryBackfill:
 
     @staticmethod
     def _infer_order(target: HistoryTarget, row: tuple[Any, ...]) -> tuple[list[tuple[Any, ...]], bool]:
-        order_id, status, created, due, ship, invoice = row
+        order_id, status, created, due, ship, invoice, updated = row
         if not _is_date(created):
             return [], True
         due_at = due if _is_date(due) else None
         events = [
             (order_id, None, "PENDING", created, created, inferred_event_id(target.name, order_id, "PENDING"), due_at, "ON_TIME", "inferred_baseline")
         ]
-        invalid = False
-        if status in ("SHIPPED", "INVOICED"):
-            if not _is_date(ship) or not _is_not_before(ship, created):
-                return events, True
+
+        # A current shipped/invoiced state proves the order passed through SHIPPED,
+        # even where an older source extract does not retain a shipment row.
+        shipped_at: date | datetime | None = None
+        if status in ("SHIPPED", "INVOICED") or (status == "CANCELLED" and _is_date(ship)):
+            shipped_at = ship if _is_date(ship) and _is_not_before(ship, created) else created
             events.append(
-                (order_id, "PENDING", "SHIPPED", ship, ship, inferred_event_id(target.name, order_id, "SHIPPED"), due_at, _sla_status(ship, due_at), "inferred_baseline")
+                (order_id, "PENDING", "SHIPPED", shipped_at, shipped_at, inferred_event_id(target.name, order_id, "SHIPPED"), due_at, _sla_status(shipped_at, due_at), "inferred_baseline")
             )
+
         if status == "INVOICED":
-            if not _is_date(invoice) or not _is_date(ship) or not _is_not_before(invoice, ship):
-                invalid = True
-            else:
-                invoice_due = _business_date(ship) + timedelta(days=3)
-                events.append(
-                    (order_id, "SHIPPED", "INVOICED", invoice, invoice, inferred_event_id(target.name, order_id, "INVOICED"), invoice_due, _sla_status(invoice, invoice_due), "inferred_baseline")
-                )
-        return events, invalid
+            # Prefer a valid invoice event; otherwise synthesize the terminal event
+            # from the order header and clamp it behind the inferred shipment.
+            terminal_candidate = invoice if _is_date(invoice) and _is_not_before(invoice, shipped_at) else updated
+            if not _is_date(terminal_candidate):
+                return events, True
+            invoiced_at = _clamp_not_before(terminal_candidate, shipped_at, created)
+            invoice_due = _business_date(shipped_at) + timedelta(days=3)
+            events.append(
+                (order_id, "SHIPPED", "INVOICED", invoiced_at, invoiced_at, inferred_event_id(target.name, order_id, "INVOICED"), invoice_due, _sla_status(invoiced_at, invoice_due), "inferred_baseline")
+            )
+        elif status == "CANCELLED":
+            if not _is_date(updated):
+                return events, True
+            preceding_status = "SHIPPED" if shipped_at is not None else "PENDING"
+            preceding_at = shipped_at if shipped_at is not None else created
+            cancelled_at = _clamp_not_before(updated, preceding_at, created)
+            events.append(
+                (order_id, preceding_status, "CANCELLED", cancelled_at, cancelled_at, inferred_event_id(target.name, order_id, "CANCELLED"), None, "ON_TIME", "inferred_baseline")
+            )
+        return events, False
 
     @staticmethod
     def _infer_shipment(target: HistoryTarget, row: tuple[Any, ...]) -> tuple[list[tuple[Any, ...]], bool]:

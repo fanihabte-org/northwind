@@ -78,6 +78,7 @@ def test_dry_run_infers_uncovered_orders_without_writing() -> None:
                     date(2026, 8, 5),
                     datetime(2026, 8, 2, 10),
                     datetime(2026, 8, 3, 10),
+                    datetime(2026, 8, 4, 10),
                 )
             ]
         }
@@ -101,18 +102,50 @@ def test_dry_run_infers_uncovered_orders_without_writing() -> None:
     assert all("audit_backfill_progress" not in query for query in connection.cursor_instance.executed)
 
 
-def test_dry_run_reports_invalid_order_chain_without_writing() -> None:
+def test_dry_run_completes_invoiced_chain_without_invoice_row() -> None:
+    created = datetime(2026, 8, 1, 9)
+    shipped = datetime(2026, 8, 3, 9)
+    updated = datetime(2026, 8, 2, 9)
     connection = _DryRunConnection(
-        {"ops.orders o": [(18, "INVOICED", datetime(2026, 8, 3), date(2026, 8, 5), None, None)]}
+        {"ops.orders o": [(18, "INVOICED", created, date(2026, 8, 5), shipped, None, updated)]}
     )
 
     result = HistoryBackfill(connection, batch_size=10).dry_run(TARGETS[0])[0]
+    events, invalid = HistoryBackfill._infer_order(
+        TARGETS[0], (18, "INVOICED", created, date(2026, 8, 5), shipped, None, updated)
+    )
 
     assert result["eligible"] == 1
-    assert result["would_write"] == 1
-    assert result["inferred"] == 1
-    assert result["skipped_invalid"] == 1
+    assert result["would_write"] == 3
+    assert result["inferred"] == 3
+    assert result["skipped_invalid"] == 0
+    assert [event[2] for event in events] == ["PENDING", "SHIPPED", "INVOICED"]
+    assert events[-1][3] == shipped  # updated_at is clamped behind the shipment event.
+    assert all(event[-1] == "inferred_baseline" for event in events)
+    assert not invalid
     assert not connection.cursor_instance.executemany_called
+
+
+def test_dry_run_completes_cancelled_order_chain() -> None:
+    created = datetime(2026, 8, 1, 9)
+    updated = datetime(2026, 8, 2, 9)
+    connection = _DryRunConnection(
+        {"ops.orders o": [(19, "CANCELLED", created, date(2026, 8, 5), None, None, updated)]}
+    )
+
+    result = HistoryBackfill(connection, batch_size=10).dry_run(TARGETS[0])[0]
+    events, invalid = HistoryBackfill._infer_order(
+        TARGETS[0], (19, "CANCELLED", created, date(2026, 8, 5), None, None, updated)
+    )
+
+    assert result["would_write"] == 2
+    assert result["skipped_invalid"] == 0
+    assert [(event[1], event[2], event[3]) for event in events] == [
+        (None, "PENDING", created),
+        ("PENDING", "CANCELLED", updated),
+    ]
+    assert all(event[-1] == "inferred_baseline" for event in events)
+    assert not invalid
 
 
 @pytest.mark.parametrize(

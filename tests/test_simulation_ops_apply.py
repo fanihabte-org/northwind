@@ -174,3 +174,16 @@ def test_ops_applier_resolves_support_case_and_records_history() -> None:
         if "INSERT INTO ops.support_case_status_history" in query
     )
     assert history_parameters[4:6] == [datetime(2026, 8, 5, 9, 0), "ON_TIME"]
+
+
+def test_ops_applier_closes_resolved_support_case_and_records_history() -> None:
+    event = SourceEvent.create(
+        business_date=date(2026, 8, 6), source_system="ops", event_type="support_case_closed",
+        entity_id="900", payload={"case_id": 900, "priority": "P3"},
+    )
+    cursor = RecordingCursor()
+    cursor.responses = iter([None, ("Resolved",)])
+    assert OpsEventApplier().apply(cursor, [event]) == 1
+    statements = "\n".join(cursor.queries)
+    assert "SET status = 'Closed', updated_at = %s" in statements
+    assert "'Resolved', 'Closed'" in statements

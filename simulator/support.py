@@ -72,7 +72,25 @@ class SupportCasePlanner:
                 business_date=run_date, source_system="ops", event_type="support_case_resolved",
                 entity_id=str(case_id), payload={"case_id": case_id, "priority": opening.payload["priority"]},
             ))
-        return openings + resolutions
+        closed_case_ids = {
+            int(event.payload["case_id"])
+            for event in events
+            if event.event_type == "support_case_closed"
+        }
+        closures = []
+        for resolution in events:
+            if resolution.event_type != "support_case_resolved":
+                continue
+            case_id = int(resolution.payload["case_id"])
+            if case_id in closed_case_ids:
+                continue
+            if resolution.business_date + timedelta(days=self._closure_delay(resolution)) > run_date:
+                continue
+            closures.append(SourceEvent.create(
+                business_date=run_date, source_system="ops", event_type="support_case_closed",
+                entity_id=str(case_id), payload={"case_id": case_id, "priority": resolution.payload["priority"]},
+            ))
+        return openings + resolutions + closures
 
     @staticmethod
     def _opens_case(delivery: SourceEvent) -> bool:
@@ -85,3 +103,7 @@ class SupportCasePlanner:
     @staticmethod
     def _resolution_delay(opening: SourceEvent) -> int:
         return 1 + hashlib.sha256(f"support-resolution:{opening.event_id}".encode()).digest()[0] % 3
+
+    @staticmethod
+    def _closure_delay(resolution: SourceEvent) -> int:
+        return 1 + hashlib.sha256(f"support-close:{resolution.event_id}".encode()).digest()[0] % 2

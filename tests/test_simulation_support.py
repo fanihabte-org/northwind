@@ -34,3 +34,15 @@ def test_support_case_planner_schedules_each_resolution_once() -> None:
     resolution = next(event for event in planned if event.event_type == "support_case_resolved")
     assert resolution.payload["case_id"] == 900
     assert not planner.plan(date(2026, 7, 10), [opening, resolution], SupportSnapshot(901))
+
+
+def test_support_case_planner_schedules_each_closure_after_resolution() -> None:
+    planner = SupportCasePlanner(SimulationPolicy())
+    resolution = SourceEvent.create(
+        business_date=date(2026, 7, 1), source_system="ops", event_type="support_case_resolved",
+        entity_id="900", payload={"case_id": 900, "priority": "P3"},
+    )
+    planned = planner.plan(date(2026, 7, 10), [resolution], SupportSnapshot(901))
+    closure = next(event for event in planned if event.event_type == "support_case_closed")
+    assert closure.payload["case_id"] == 900
+    assert not planner.plan(date(2026, 7, 10), [resolution, closure], SupportSnapshot(901))

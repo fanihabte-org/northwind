@@ -39,7 +39,7 @@ class OpsEventApplier:
 
     @staticmethod
     def _event_priority(event: SourceEvent) -> int:
-        return {"order_created": 0, "shipment_created": 1, "shipment_delivered": 2, "invoice_created": 3, "support_case_opened": 4, "support_case_resolved": 5}.get(
+        return {"order_created": 0, "shipment_created": 1, "shipment_delivered": 2, "invoice_created": 3, "support_case_opened": 4, "support_case_resolved": 5, "support_case_closed": 6}.get(
             event.event_type, 99
         )
 
@@ -56,6 +56,8 @@ class OpsEventApplier:
             self._apply_support_case(cursor, event)
         elif event.event_type == "support_case_resolved":
             self._apply_support_resolution(cursor, event)
+        elif event.event_type == "support_case_closed":
+            self._apply_support_closure(cursor, event)
         else:
             raise ValueError(f"unsupported Ops event type: {event.event_type}")
 
@@ -403,3 +405,20 @@ class OpsEventApplier:
             """,
             [case_id, occurred_at, occurred_at, event.event_id, due_at, sla_status, event.anomaly_type],
         )
+
+    def _apply_support_closure(self, cursor: Cursor, event: SourceEvent) -> None:
+        case_id = int(event.payload["case_id"])
+        cursor.execute("SELECT status FROM ops.support_cases WHERE case_id = %s", [case_id])
+        case = cursor.fetchone()
+        if case is None:
+            raise RuntimeError(f"support closure requires case {case_id}")
+        if case[0] != "Resolved":
+            return
+        occurred_at = f"{event.business_date.isoformat()} 17:00:00"
+        cursor.execute("UPDATE ops.support_cases SET status = 'Closed', updated_at = %s WHERE case_id = %s", [occurred_at, case_id])
+        cursor.execute("""
+            INSERT INTO ops.support_case_status_history (
+                case_id, previous_status, new_status, occurred_at, recorded_at,
+                source_event_id, sla_due_at, sla_status, anomaly_type
+            ) VALUES (%s, 'Resolved', 'Closed', %s, %s, %s, %s, 'ON_TIME', %s)
+            """, [case_id, occurred_at, occurred_at, event.event_id, occurred_at, event.anomaly_type])

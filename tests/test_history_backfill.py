@@ -56,6 +56,17 @@ class _DryRunConnection:
         return self.cursor_instance
 
 
+@pytest.mark.parametrize("target", TARGETS)
+def test_candidate_query_casts_null_pagination_parameter_for_postgresql(target) -> None:
+    connection = _DryRunConnection({})
+
+    HistoryBackfill(connection, batch_size=10).dry_run(target)
+
+    query = connection.cursor_instance.executed[0]
+    assert "(%s::BIGINT IS NULL OR" in query
+    assert query.count("%s::BIGINT") == 2
+
+
 def test_dry_run_infers_uncovered_orders_without_writing() -> None:
     connection = _DryRunConnection(
         {

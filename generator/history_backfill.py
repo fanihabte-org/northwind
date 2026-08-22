@@ -89,7 +89,7 @@ class HistoryBackfill:
                 FROM ops.orders o
                 LEFT JOIN ops.shipments s USING (order_id)
                 LEFT JOIN ops.invoices i USING (order_id)
-                WHERE (%s IS NULL OR o.order_id > %s::BIGINT)
+                WHERE (%s::BIGINT IS NULL OR o.order_id > %s::BIGINT)
                   AND NOT EXISTS (
                     SELECT 1 FROM ops.order_status_history h WHERE h.order_id = o.order_id
                   )
@@ -98,7 +98,7 @@ class HistoryBackfill:
             TARGETS[1].name: """
                 SELECT shipment_id, ship_date, delivered_date, promised_delivery_date
                 FROM ops.shipments s
-                WHERE (%s IS NULL OR shipment_id > %s::BIGINT)
+                WHERE (%s::BIGINT IS NULL OR shipment_id > %s::BIGINT)
                   AND NOT EXISTS (
                     SELECT 1 FROM ops.shipment_status_history h WHERE h.shipment_id = s.shipment_id
                   )
@@ -107,7 +107,7 @@ class HistoryBackfill:
             TARGETS[2].name: """
                 SELECT invoice_id, status, created_at, updated_at
                 FROM ops.invoices i
-                WHERE (%s IS NULL OR invoice_id > %s::BIGINT)
+                WHERE (%s::BIGINT IS NULL OR invoice_id > %s::BIGINT)
                   AND NOT EXISTS (
                     SELECT 1 FROM ops.invoice_status_history h WHERE h.invoice_id = i.invoice_id
                   )
@@ -116,7 +116,7 @@ class HistoryBackfill:
             TARGETS[3].name: """
                 SELECT case_id, status, opened_at, resolution_hours, updated_at
                 FROM ops.support_cases c
-                WHERE (%s IS NULL OR case_id > %s::BIGINT)
+                WHERE (%s::BIGINT IS NULL OR case_id > %s::BIGINT)
                   AND NOT EXISTS (
                     SELECT 1 FROM ops.support_case_status_history h WHERE h.case_id = c.case_id
                   )

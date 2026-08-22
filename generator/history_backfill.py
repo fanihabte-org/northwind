@@ -10,6 +10,7 @@ import hashlib
 import json
 import os
 from dataclasses import dataclass
+from datetime import date, datetime, timedelta
 
 import psycopg
 
@@ -33,6 +34,10 @@ TARGETS = (
 
 def inferred_event_id(history_name: str, entity_id: object, transition: str) -> str:
     return hashlib.sha256(f"inferred_baseline:{history_name}:{entity_id}:{transition}".encode()).hexdigest()
+
+
+def _business_date(value: date | datetime) -> date:
+    return value.date() if isinstance(value, datetime) else value
 
 
 class HistoryBackfill:
@@ -81,9 +86,10 @@ class HistoryBackfill:
                 for order_id,status,created,due,ship,invoice in rows:
                     inserts.append((order_id,None,"PENDING",created,created,inferred_event_id(target.name,order_id,"PENDING"),due,"ON_TIME","inferred_baseline"))
                     if status in ("SHIPPED","INVOICED") and ship:
-                        inserts.append((order_id,"PENDING","SHIPPED",ship,ship,inferred_event_id(target.name,order_id,"SHIPPED"),due,"BREACHED" if ship.date()>due else "ON_TIME","inferred_baseline"))
+                        inserts.append((order_id,"PENDING","SHIPPED",ship,ship,inferred_event_id(target.name,order_id,"SHIPPED"),due,"BREACHED" if _business_date(ship)>due else "ON_TIME","inferred_baseline"))
                     if status == "INVOICED" and ship and invoice:
-                        inserts.append((order_id,"SHIPPED","INVOICED",invoice,invoice,inferred_event_id(target.name,order_id,"INVOICED"),ship + __import__('datetime').timedelta(days=3),"BREACHED" if invoice>ship + __import__('datetime').timedelta(days=3) else "ON_TIME","inferred_baseline"))
+                        invoice_due = _business_date(ship) + timedelta(days=3)
+                        inserts.append((order_id,"SHIPPED","INVOICED",invoice,invoice,inferred_event_id(target.name,order_id,"INVOICED"),invoice_due,"BREACHED" if _business_date(invoice)>invoice_due else "ON_TIME","inferred_baseline"))
                 cursor.executemany("INSERT INTO ops.order_status_history (order_id,previous_status,new_status,occurred_at,recorded_at,source_event_id,sla_due_at,sla_status,anomaly_type) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s) ON CONFLICT (source_event_id) DO NOTHING", inserts)
                 cursor.execute("UPDATE simulation.audit_backfill_progress SET last_key=%s, rows_scanned=rows_scanned+%s, rows_updated=rows_updated+%s, updated_at=current_timestamp WHERE backfill_name=%s", [str(rows[-1][0]),len(rows),len(inserts),target.name])
             self.connection.commit(); results.append({"name":target.name,"scanned":len(rows),"inserted":len(inserts),"completed":False})

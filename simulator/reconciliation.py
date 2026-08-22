@@ -6,7 +6,9 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import date
 from typing import Any, Iterable
+from pathlib import Path
 
+from simulator.crm_history import validate_opportunity_history_partition
 from simulator.events import SourceEvent
 from simulator.state import SimulationStateStore
 
@@ -18,6 +20,7 @@ class ReconciliationError(RuntimeError):
 @dataclass(frozen=True)
 class ReconciliationReport:
     run_date: date
+    crm_history_events: int
     ops_events: int
     erp_events: int
 
@@ -35,21 +38,30 @@ class DailySourceReconciler:
         state: SimulationStateStore,
         ops_connection_factory: Callable[[], Any],
         erp_connection_factory: Callable[[], Any],
+        crm_delta_root: Path | None = None,
     ) -> None:
         self.state = state
         self.ops_connection_factory = ops_connection_factory
         self.erp_connection_factory = erp_connection_factory
+        self.crm_delta_root = crm_delta_root
 
     def reconcile(self, run_date: date) -> ReconciliationReport:
+        crm_events = self.state.events_for(run_date, "crm")
         ops_events = self.state.events_for(run_date, "ops")
         erp_events = self.state.events_for(run_date, "erp")
-        problems = self._ops_problems(ops_events)
+        problems = self._crm_history_problems(run_date, crm_events)
+        problems.extend(self._ops_problems(ops_events))
         problems.extend(self._erp_problems(erp_events))
         if problems:
             raise ReconciliationError(
                 f"simulation reconciliation failed for {run_date.isoformat()}: " + "; ".join(problems)
             )
-        return ReconciliationReport(run_date, len(ops_events), len(erp_events))
+        return ReconciliationReport(run_date, len(crm_events), len(ops_events), len(erp_events))
+
+    def _crm_history_problems(self, run_date: date, events: list[SourceEvent]) -> list[str]:
+        if self.crm_delta_root is None:
+            return []
+        return list(validate_opportunity_history_partition(self.crm_delta_root, run_date, events).problems)
 
     def _ops_problems(self, events: list[SourceEvent]) -> list[str]:
         connection = self.ops_connection_factory()

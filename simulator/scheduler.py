@@ -98,7 +98,7 @@ def build_runner(
         OpsEventApplier(),
         ops_factory,
     )
-    reconciler = DailySourceReconciler(state, ops_factory, erp_factory)
+    reconciler = DailySourceReconciler(state, ops_factory, erp_factory, delta_root)
     erp = ErpRun(
         state,
         ErpDailyPlanner(policy),

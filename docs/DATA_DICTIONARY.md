@@ -596,6 +596,31 @@ happened and still reference the ids.
 
 ---
 
+### `crm.opportunity_history` (`OpportunityHistory` over the API)
+**Grain:** one immutable opportunity-stage transition. The generated seed base is
+schema-bearing and empty; daily simulator rows are published in one immutable Parquet
+partition per `business_date` and are exposed through FakeForce as `OpportunityHistory`.
+
+| Column | Type | Null | Description |
+|---|---|---|---|
+| `Id` | VARCHAR(64) | no | Deterministic CRM simulator event id. Primary key and retry de-duplication key. |
+| `OpportunityId` | VARCHAR(18) | no | Salesforce opportunity id (`006…`) whose stage changed. |
+| `PreviousStageName` | VARCHAR(40) | yes | Stage before the event. `NULL` only for the initial `opportunity_created` history row. |
+| `StageName` | VARCHAR(40) | no | Stage after the event. A stage-change row must differ from `PreviousStageName`. |
+| `CreatedDate` | VARCHAR(30) | no | Business-effective CRM event time, in Salesforce ISO-8601 format. |
+| `CreatedById` | VARCHAR(12) | no | Rep responsible for the transition. |
+| `SystemModstamp` | VARCHAR(30) | no | CRM extraction watermark for the event; use this with `Id` as a tie-breaker. |
+
+This is append-only history, not an SCD and not a replacement for
+`crm.opportunities`: the latter remains the latest current state. There is no
+`IsDeleted`, update, or overwrite operation for history rows. Before a simulation date
+is completed, reconciliation reads (but never edits) that date's manifest and
+partition. It verifies the immutable path, Parquet schema, deterministic event IDs,
+CRM event fields, business-date placement, and valid initial/stage-change shape. A
+failure leaves the simulation date incomplete for safe retry.
+
+---
+
 ### `crm.sales_reps`
 **Grain:** one row per sales representative. ≈ 220 rows.
 

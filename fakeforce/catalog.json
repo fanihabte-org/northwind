@@ -28,6 +28,15 @@
       "id_field": "Id",
       "soft_delete_field": "IsDeleted",
       "mode": "read_only"
+    },
+    {
+      "name": "OpportunityHistory",
+      "sources": ["crm_opportunity_history.parquet"],
+      "delta_patterns": ["opportunity_history/**/*.parquet"],
+      "version_field": "SystemModstamp",
+      "id_field": "Id",
+      "soft_delete_field": null,
+      "mode": "read_only"
     }
   ]
 }

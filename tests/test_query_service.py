@@ -32,9 +32,42 @@ def query_service(tmp_path) -> LazyQueryService:
         ),
         data_root / "accounts.parquet",
     )
+    history_schema = pa.schema([
+        ("Id", pa.string()), ("OpportunityId", pa.string()),
+        ("PreviousStageName", pa.string()), ("StageName", pa.string()),
+        ("CreatedDate", pa.string()), ("CreatedById", pa.string()),
+        ("SystemModstamp", pa.string()),
+    ])
+    pq.write_table(
+        pa.Table.from_pylist([], schema=history_schema),
+        data_root / "crm_opportunity_history.parquet",
+    )
+    history_delta = data_root / "opportunity_history" / "business_date=2026-07-25" / "delta.parquet"
+    history_delta.parent.mkdir(parents=True)
+    pq.write_table(pa.Table.from_pylist([
+        {
+            "Id": "crm-history-001", "OpportunityId": "0061",
+            "PreviousStageName": "Prospecting", "StageName": "Proposal",
+            "CreatedDate": "2026-07-25T08:00:00.000+0000", "CreatedById": "REP-0001",
+            "SystemModstamp": "2026-07-25T08:00:00.000+0000",
+        },
+        {
+            "Id": "crm-history-002", "OpportunityId": "0061",
+            "PreviousStageName": "Proposal", "StageName": "Closed Won",
+            "CreatedDate": "2026-07-26T08:00:00.000+0000", "CreatedById": "REP-0001",
+            "SystemModstamp": "2026-07-26T08:00:00.000+0000",
+        },
+    ], schema=history_schema), history_delta)
     catalog_path = tmp_path / "catalog.json"
     catalog_path.write_text(
-        json.dumps({"version": 1, "objects": [{"name": "Account", "sources": ["accounts.parquet"]}]})
+        json.dumps({"version": 1, "objects": [
+            {"name": "Account", "sources": ["accounts.parquet"]},
+            {
+                "name": "OpportunityHistory", "sources": ["crm_opportunity_history.parquet"],
+                "delta_patterns": ["opportunity_history/**/*.parquet"],
+                "version_field": "SystemModstamp", "soft_delete_field": None,
+            },
+        ]})
     )
     settings = Settings.from_env(
         {
@@ -76,6 +109,20 @@ def test_query_resolves_object_and_field_identifiers_without_case_sensitivity(
     assert page.total_size == 1
     assert page.records[0]["Id"] == "001"
     assert page.records[0]["Name"] == "Acme"
+
+
+def test_query_reads_immutable_opportunity_history_partitions(query_service) -> None:
+    page = query_service.fetch_page(
+        "SELECT Id, OpportunityId, PreviousStageName, StageName "
+        "FROM opportunityhistory WHERE opportunityid = '0061' ORDER BY createddate",
+        False,
+        page_size=10,
+    )
+
+    assert page.total_size == 2
+    assert [record["StageName"] for record in page.records] == ["Proposal", "Closed Won"]
+    assert [record["PreviousStageName"] for record in page.records] == ["Prospecting", "Proposal"]
+    assert all(record["attributes"]["type"] == "OpportunityHistory" for record in page.records)
 
 
 def test_query_text_like_and_in_literals_are_case_insensitive(query_service) -> None:

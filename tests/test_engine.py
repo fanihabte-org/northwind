@@ -176,6 +176,60 @@ def test_engine_discovers_parquet_deltas_and_returns_only_latest_record(tmp_path
         assert conn.execute('SELECT "Name" FROM "ff_source_Account"').fetchall() == [("After",)]
 
 
+def test_engine_exposes_all_immutable_opportunity_history_partitions(tmp_path) -> None:
+    data_root = tmp_path / "data"
+    data_root.mkdir()
+    history_schema = pa.schema([
+        ("Id", pa.string()), ("OpportunityId", pa.string()),
+        ("PreviousStageName", pa.string()), ("StageName", pa.string()),
+        ("CreatedDate", pa.string()), ("CreatedById", pa.string()),
+        ("SystemModstamp", pa.string()),
+    ])
+    pq.write_table(
+        pa.Table.from_pylist([], schema=history_schema),
+        data_root / "crm_opportunity_history.parquet",
+    )
+    catalog_path = tmp_path / "catalog.json"
+    catalog_path.write_text(json.dumps({"version": 1, "objects": [{
+        "name": "OpportunityHistory",
+        "sources": ["crm_opportunity_history.parquet"],
+        "delta_patterns": ["opportunity_history/**/*.parquet"],
+        "version_field": "SystemModstamp",
+        "soft_delete_field": None,
+    }]}))
+    for business_date, record in (
+        ("2026-07-25", {
+            "Id": "crm-history-001", "OpportunityId": "0061",
+            "PreviousStageName": "Prospecting", "StageName": "Proposal",
+            "CreatedDate": "2026-07-25T08:00:00.000+0000", "CreatedById": "REP-0001",
+            "SystemModstamp": "2026-07-25T08:00:00.000+0000",
+        }),
+        ("2026-07-26", {
+            "Id": "crm-history-002", "OpportunityId": "0061",
+            "PreviousStageName": "Proposal", "StageName": "Closed Won",
+            "CreatedDate": "2026-07-26T08:00:00.000+0000", "CreatedById": "REP-0001",
+            "SystemModstamp": "2026-07-26T08:00:00.000+0000",
+        }),
+    ):
+        target = data_root / "opportunity_history" / f"business_date={business_date}" / "delta.parquet"
+        target.parent.mkdir(parents=True)
+        pq.write_table(pa.Table.from_pylist([record], schema=history_schema), target)
+
+    settings = Settings.from_env({
+        "FAKEFORCE_SEED_DIR": str(data_root), "FAKEFORCE_DATA_ROOTS": str(data_root),
+        "FAKEFORCE_CATALOG_PATH": str(catalog_path), "FAKEFORCE_STATE_DIR": str(tmp_path / "state"),
+    })
+    catalog = DatasetCatalog.from_file(catalog_path, settings.data_roots)
+
+    with DuckDBEngine(settings, catalog).connection() as conn:
+        rows = conn.execute(
+            'SELECT "PreviousStageName", "StageName" FROM "ff_source_OpportunityHistory" '
+            'WHERE "OpportunityId" = ? ORDER BY "CreatedDate"', ["0061"]
+        ).fetchall()
+
+    assert rows == [("Prospecting", "Proposal"), ("Proposal", "Closed Won")]
+
+
 def test_engine_exposes_audit_compatibility_aliases_and_can_version_by_system_modstamp(tmp_path) -> None:
     data_root = tmp_path / "data"
     data_root.mkdir()

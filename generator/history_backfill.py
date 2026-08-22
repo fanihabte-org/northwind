@@ -149,6 +149,37 @@ class HistoryBackfill:
             self.connection.commit(); results.append({"name":target.name,"scanned":len(rows),"inserted":len(inserts),"completed":False})
         return results
 
+    def run_support_cases(self, max_batches: int = 1) -> list[dict[str, object]]:
+        target = TARGETS[3]; results=[]
+        for _ in range(max_batches):
+            with self.connection.cursor() as cursor:
+                cursor.execute("INSERT INTO simulation.audit_backfill_progress (backfill_name) VALUES (%s) ON CONFLICT DO NOTHING", [target.name])
+                cursor.execute("SELECT last_key, completed FROM simulation.audit_backfill_progress WHERE backfill_name=%s", [target.name])
+                last_key, completed=cursor.fetchone()
+                if completed:
+                    self.connection.commit(); return results+[{"name":target.name,"scanned":0,"inserted":0,"completed":True}]
+                cursor.execute("""SELECT case_id,status,opened_at,resolution_hours,updated_at FROM ops.support_cases c
+                    WHERE (%s IS NULL OR case_id>%s::BIGINT) AND NOT EXISTS
+                    (SELECT 1 FROM ops.support_case_status_history h WHERE h.case_id=c.case_id)
+                    ORDER BY case_id LIMIT %s""",[last_key,last_key,self.batch_size])
+                rows=cursor.fetchall()
+                if not rows:
+                    cursor.execute("UPDATE simulation.audit_backfill_progress SET completed=true, completed_at=current_timestamp WHERE backfill_name=%s",[target.name]); self.connection.commit()
+                    return results+[{"name":target.name,"scanned":0,"inserted":0,"completed":True}]
+                inserts=[]
+                for case_id,status,opened,hours,updated in rows:
+                    if not opened: continue
+                    inserts.append((case_id,None,"Open",opened,opened,inferred_event_id(target.name,case_id,"OPEN"),None,"ON_TIME","inferred_baseline"))
+                    resolved = opened + timedelta(hours=float(hours)) if hours is not None else None
+                    if status in ("Resolved","Closed") and resolved and resolved >= opened and (updated is None or resolved <= updated):
+                        inserts.append((case_id,"Open","Resolved",resolved,resolved,inferred_event_id(target.name,case_id,"RESOLVED"),opened+timedelta(days=3),"BREACHED" if resolved>opened+timedelta(days=3) else "ON_TIME","inferred_baseline"))
+                        if status == "Closed" and updated and updated >= resolved:
+                            inserts.append((case_id,"Resolved","Closed",updated,updated,inferred_event_id(target.name,case_id,"CLOSED"),None,"ON_TIME","inferred_baseline"))
+                cursor.executemany("INSERT INTO ops.support_case_status_history (case_id,previous_status,new_status,occurred_at,recorded_at,source_event_id,sla_due_at,sla_status,anomaly_type) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s) ON CONFLICT (source_event_id) DO NOTHING",inserts)
+                cursor.execute("UPDATE simulation.audit_backfill_progress SET last_key=%s,rows_scanned=rows_scanned+%s,rows_updated=rows_updated+%s,updated_at=current_timestamp WHERE backfill_name=%s",[str(rows[-1][0]),len(rows),len(inserts),target.name])
+            self.connection.commit(); results.append({"name":target.name,"scanned":len(rows),"inserted":len(inserts),"completed":False})
+        return results
+
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
@@ -172,6 +203,8 @@ def main(argv: list[str] | None = None) -> int:
             result = runner.run_shipments(args.max_batches)
         elif args.apply and args.target == TARGETS[2].name:
             result = runner.run_invoices(args.max_batches)
+        elif args.apply and args.target == TARGETS[3].name:
+            result = runner.run_support_cases(args.max_batches)
         else:
             parser.error("choose --dry-run or --status; writes require a table-specific implementation")
         print(json.dumps(result, default=str, indent=2))

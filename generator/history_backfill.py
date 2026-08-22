@@ -54,6 +54,41 @@ class HistoryBackfill:
             keys = cursor.fetchall()
         return {"name": target.name, "scanned": len(keys), "would_write": 0, "dry_run": True}
 
+    def run_orders(self, max_batches: int = 1) -> list[dict[str, object]]:
+        target = TARGETS[0]
+        results = []
+        for _ in range(max_batches):
+            with self.connection.cursor() as cursor:
+                cursor.execute("INSERT INTO simulation.audit_backfill_progress (backfill_name) VALUES (%s) ON CONFLICT DO NOTHING", [target.name])
+                cursor.execute("SELECT last_key, completed FROM simulation.audit_backfill_progress WHERE backfill_name=%s", [target.name])
+                last_key, completed = cursor.fetchone()
+                if completed:
+                    self.connection.commit(); return results + [{"name": target.name, "scanned": 0, "inserted": 0, "completed": True}]
+                cursor.execute("""
+                    SELECT o.order_id, o.status, o.created_at, o.requested_delivery_date,
+                           s.ship_date, i.created_at
+                    FROM ops.orders o LEFT JOIN ops.shipments s USING (order_id)
+                    LEFT JOIN ops.invoices i USING (order_id)
+                    WHERE (%s IS NULL OR o.order_id > %s::BIGINT)
+                      AND NOT EXISTS (SELECT 1 FROM ops.order_status_history h WHERE h.order_id=o.order_id)
+                    ORDER BY o.order_id LIMIT %s
+                    """, [last_key, last_key, self.batch_size])
+                rows = cursor.fetchall()
+                if not rows:
+                    cursor.execute("UPDATE simulation.audit_backfill_progress SET completed=true, completed_at=current_timestamp WHERE backfill_name=%s", [target.name]); self.connection.commit()
+                    return results + [{"name": target.name, "scanned": 0, "inserted": 0, "completed": True}]
+                inserts=[]
+                for order_id,status,created,due,ship,invoice in rows:
+                    inserts.append((order_id,None,"PENDING",created,created,inferred_event_id(target.name,order_id,"PENDING"),due,"ON_TIME","inferred_baseline"))
+                    if status in ("SHIPPED","INVOICED") and ship:
+                        inserts.append((order_id,"PENDING","SHIPPED",ship,ship,inferred_event_id(target.name,order_id,"SHIPPED"),due,"BREACHED" if ship.date()>due else "ON_TIME","inferred_baseline"))
+                    if status == "INVOICED" and ship and invoice:
+                        inserts.append((order_id,"SHIPPED","INVOICED",invoice,invoice,inferred_event_id(target.name,order_id,"INVOICED"),ship + __import__('datetime').timedelta(days=3),"BREACHED" if invoice>ship + __import__('datetime').timedelta(days=3) else "ON_TIME","inferred_baseline"))
+                cursor.executemany("INSERT INTO ops.order_status_history (order_id,previous_status,new_status,occurred_at,recorded_at,source_event_id,sla_due_at,sla_status,anomaly_type) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s) ON CONFLICT (source_event_id) DO NOTHING", inserts)
+                cursor.execute("UPDATE simulation.audit_backfill_progress SET last_key=%s, rows_scanned=rows_scanned+%s, rows_updated=rows_updated+%s, updated_at=current_timestamp WHERE backfill_name=%s", [str(rows[-1][0]),len(rows),len(inserts),target.name])
+            self.connection.commit(); results.append({"name":target.name,"scanned":len(rows),"inserted":len(inserts),"completed":False})
+        return results
+
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
@@ -62,6 +97,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--batch-size", type=int, default=10_000)
     parser.add_argument("--status", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--apply", action="store_true")
+    parser.add_argument("--max-batches", type=int, default=1)
     args = parser.parse_args(argv)
     with psycopg.connect(args.ops_dsn, autocommit=False) as connection:
         runner = HistoryBackfill(connection, args.batch_size)
@@ -69,6 +106,8 @@ def main(argv: list[str] | None = None) -> int:
             result = runner.status()
         elif args.dry_run:
             result = runner.dry_run(next(target for target in TARGETS if target.name == args.target))
+        elif args.apply and args.target == TARGETS[0].name:
+            result = runner.run_orders(args.max_batches)
         else:
             parser.error("choose --dry-run or --status; writes require a table-specific implementation")
         print(json.dumps(result, default=str, indent=2))

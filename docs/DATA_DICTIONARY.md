@@ -182,9 +182,13 @@ uses the following common contract:
 from the wall-clock time at which a container happens to run. `recorded_at` is
 written in the same source-database transaction as the current-state update.
 
-Existing seed records are a baseline current snapshot: the system will not invent
-transitions that are not present in the source data. History begins with newly
-simulated lifecycle events after the feature is deployed.
+Existing seed records are a baseline current snapshot. An explicit, opt-in
+inferred-baseline backfill may derive the complete valid predecessor chain from
+the current operational rows and their business dates. It writes only to the
+append-only history tables, never changes a current-state row, uses deterministic
+event identifiers for idempotency, and marks every inserted row
+`anomaly_type = 'inferred_baseline'`. Rows with simulator-recorded history are
+excluded. Inferred timestamps are estimates rather than source-recorded facts.
 
 Dimension/master tables remain current-state only; no SCD or dimensional-history
 tables are created for this dataset.

@@ -85,6 +85,23 @@ or deletes business rows.
 
 ## Source status and contract registry
 
+## Inferred baseline lifecycle history
+
+After deployment, inspect first (read-only), then run one target at a time in
+bounded batches. These commands insert only into history tables; they never
+change current-state records.
+
+```bash
+docker compose run --rm migrations python -m generator.history_backfill --status
+docker compose run --rm migrations python -m generator.history_backfill --target inferred_order_status_history --dry-run
+docker compose run --rm migrations python -m generator.history_backfill --target inferred_order_status_history --apply --max-batches 1
+docker compose run --rm migrations python -m generator.history_validate
+```
+
+Repeat `--apply --max-batches 1` until status is complete. Re-running is safe:
+checkpoints and deterministic event IDs prevent duplicates. Use the report to
+investigate invalid source chronology before continuing.
+
 Use the migration image for low-cost operational snapshots; it reads catalog metadata
 and durable checkpoints rather than scanning large business tables:
 

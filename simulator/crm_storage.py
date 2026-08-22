@@ -44,6 +44,10 @@ class CrmDeltaPublisher:
                 raise CrmDeltaError("a different CRM event set was already published for this date")
             return {name: Path(path) for name, path in manifest["parts"].items()}
 
+        history_events = [event for event in grouped.get("opportunities", [])]
+        # Read the prior current state before publishing this date's Opportunity
+        # delta; otherwise the just-written delta would hide the prior stage.
+        history_rows = self._opportunity_history_rows(history_events) if history_events else []
         parts: dict[str, Path] = {}
         for object_name, object_events in grouped.items():
             rows = self._materialize(object_name, object_events)
@@ -51,9 +55,33 @@ class CrmDeltaPublisher:
             target.parent.mkdir(parents=True, exist_ok=True)
             self._write_parquet(target, rows, pq.ParquetFile(self.base_sources[object_name]).schema_arrow)
             parts[object_name] = target
+        if history_rows:
+            target = self.root / "opportunity_history" / f"business_date={run_date.isoformat()}" / "delta.parquet"
+            target.parent.mkdir(parents=True, exist_ok=True)
+            self._write_parquet(target, history_rows, OPPORTUNITY_HISTORY_SCHEMA)
+            parts["opportunity_history"] = target
         manifest_path.parent.mkdir(parents=True, exist_ok=True)
         self._atomic_json(manifest_path, {"events": desired, "parts": {key: str(value) for key, value in parts.items()}})
         return parts
+
+    def _opportunity_history_rows(self, events: list[SourceEvent]) -> list[dict[str, object]]:
+        previous = self._current_rows("opportunities", [event.entity_id for event in events])
+        rows: list[dict[str, object]] = []
+        for event in events:
+            before = previous.get(event.entity_id, {})
+            if event.event_type not in {"opportunity_created", "opportunity_stage_changed"}:
+                continue
+            new_stage = str(event.payload.get("StageName", before.get("StageName", "")))
+            rows.append({
+                "Id": event.event_id,
+                "OpportunityId": event.entity_id,
+                "PreviousStageName": before.get("StageName"),
+                "StageName": new_stage,
+                "CreatedDate": str(event.payload.get("LastModifiedDate")),
+                "CreatedById": str(event.payload.get("LastModifiedById", before.get("OwnerId", ""))),
+                "SystemModstamp": str(event.payload.get("SystemModstamp", event.payload.get("LastModifiedDate"))),
+            })
+        return rows
 
     def _materialize(self, object_name: str, events: list[SourceEvent]) -> list[dict[str, object]]:
         ids = [event.entity_id for event in events]
@@ -129,3 +157,10 @@ class CrmDeltaPublisher:
         except BaseException:
             temporary.unlink(missing_ok=True)
             raise
+
+
+OPPORTUNITY_HISTORY_SCHEMA = pa.schema([
+    ("Id", pa.string()), ("OpportunityId", pa.string()), ("PreviousStageName", pa.string()),
+    ("StageName", pa.string()), ("CreatedDate", pa.string()), ("CreatedById", pa.string()),
+    ("SystemModstamp", pa.string()),
+])

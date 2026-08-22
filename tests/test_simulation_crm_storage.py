@@ -30,3 +30,7 @@ def test_delta_publisher_writes_complete_records_and_is_idempotent(tmp_path: Pat
     changed_opportunity = pq.read_table(first["opportunities"]).to_pylist()[0]
     assert changed_opportunity["StageName"] == "Closed Won"
     assert changed_opportunity["IsDeleted"] is False
+    history = pq.read_table(first["opportunity_history"]).to_pylist()[0]
+    assert history["OpportunityId"] == "0061"
+    assert history["PreviousStageName"] == "Proposal"
+    assert history["StageName"] == "Closed Won"

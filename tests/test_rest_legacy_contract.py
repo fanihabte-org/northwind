@@ -152,6 +152,45 @@ def test_data_responses_include_durable_salesforce_limit_usage(
     assert response.json()["DailyApiRequests"]["Remaining"] <= response.json()["DailyApiRequests"]["Max"]
 
 
+def test_describe_does_not_drift_before_the_configured_date(
+    client: TestClient, auth_headers: dict[str, str]
+) -> None:
+    fakeforce.chaos["drift_after"] = "2099-01-01"
+
+    response = client.get(
+        "/services/data/v60.0/sobjects/Account/describe", headers=auth_headers
+    )
+
+    assert response.status_code == 200
+    assert "Territory__c" not in {f["name"] for f in response.json()["fields"]}
+
+
+def test_describe_drifts_once_the_configured_date_has_passed(
+    client: TestClient, auth_headers: dict[str, str]
+) -> None:
+    fakeforce.chaos["drift_after"] = "2020-01-01"
+
+    response = client.get(
+        "/services/data/v60.0/sobjects/Account/describe", headers=auth_headers
+    )
+
+    assert response.status_code == 200
+    assert "Territory__c" in {f["name"] for f in response.json()["fields"]}
+
+
+def test_describe_treats_a_malformed_drift_after_as_inactive(
+    client: TestClient, auth_headers: dict[str, str]
+) -> None:
+    fakeforce.chaos["drift_after"] = "not-a-date"
+
+    response = client.get(
+        "/services/data/v60.0/sobjects/Account/describe", headers=auth_headers
+    )
+
+    assert response.status_code == 200
+    assert "Territory__c" not in {f["name"] for f in response.json()["fields"]}
+
+
 def test_missing_bearer_token_has_a_salesforce_shaped_authentication_error(client: TestClient) -> None:
     response = client.get(
         "/services/data/v60.0/query",

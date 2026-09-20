@@ -54,6 +54,13 @@ services:
 
   analytics:
     image: postgres:16-alpine
+    # Docker gives a container 64MB of /dev/shm. PostgreSQL allocates dynamic
+    # shared memory segments there for parallel query workers, so a warehouse
+    # doing large hashes or sorts fails with "could not resize shared memory
+    # segment ... No space left on device" long before it runs out of RAM.
+    # The source databases serve narrow transactional reads and have not needed
+    # this; the warehouse does.
+    shm_size: 1gb
     environment:
       POSTGRES_USER: analytics
       POSTGRES_PASSWORD: analytics

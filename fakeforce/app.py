@@ -45,7 +45,7 @@ import random
 import secrets
 import sys
 import time
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from urllib.parse import parse_qs
 from typing import Any
@@ -411,9 +411,25 @@ def describe(obj: str, authorization: str | None = Header(default=None)):
 
     fields = [{"name": c, "type": sf_type(c), "nillable": c != spec.id_field,
                "custom": c.endswith("__c")} for c in spec.schema.names]
-    if chaos.get("drift_after") and obj == "Account":
+    if _drift_active() and obj == "Account":
         fields.append({"name": "Territory__c", "type": "string", "nillable": True, "custom": True})
     return {"name": obj, "label": obj, "queryable": True, "fields": fields}
+
+
+def _drift_active() -> bool:
+    """Whether chaos['drift_after'] has actually elapsed.
+
+    A malformed date is treated as inactive rather than always-on, so a typo
+    in the knob fails closed instead of permanently drifting the schema.
+    """
+    value = chaos.get("drift_after")
+    if not value:
+        return False
+    try:
+        drift_date = date.fromisoformat(value)
+    except ValueError:
+        return False
+    return datetime.now(timezone.utc).date() >= drift_date
 
 
 def _parse_window_bound(value: str) -> datetime:

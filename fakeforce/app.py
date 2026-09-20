@@ -364,14 +364,13 @@ def query_more(locator: str, authorization: str | None = Header(default=None)):
     if page_offset < 0 or page_offset >= cur.total_size:
         return sf_error(400, "INVALID_QUERY_LOCATOR", "invalid query locator")
     try:
-        with ENGINE.connection() as connection:
-            record_ids = CURSOR_ARTIFACTS.read_page_ids(
-                connection, Path(cur.result_artifact), page_offset, cur.batch_size
-            )
-        records = QUERY_SERVICE.fetch_records_by_ids(
+        records = QUERY_SERVICE.fetch_records_for_locator(
             cur.normalized_query,
             cur.api_version == f"{API_VERSION}:queryAll",
-            record_ids,
+            Path(cur.result_artifact),
+            page_offset,
+            cur.batch_size,
+            CURSOR_ARTIFACTS,
         )
         body = {
             "totalSize": cur.total_size,

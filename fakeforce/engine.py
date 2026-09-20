@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Iterator
+from typing import Iterable, Iterator
 
 import duckdb
 import pyarrow as pa
@@ -33,8 +33,19 @@ class DuckDBEngine:
 
     @contextmanager
     def connection(
-        self, database_path: Path | str | None = None, *, create_source_views: bool = True
+        self,
+        database_path: Path | str | None = None,
+        *,
+        create_source_views: bool = True,
+        objects: Iterable[str] | None = None,
     ) -> Iterator[duckdb.DuckDBPyConnection]:
+        """Open a configured session, optionally scoped to the objects needed.
+
+        Views are rebuilt per connection, and building one resolves that
+        object's sources.  A caller that already knows which object it is about
+        to read should name it, so a single-object query stops paying for every
+        other object in the catalog.
+        """
         self.settings.temp_directory.mkdir(parents=True, exist_ok=True)
         require_disk_reserve(
             self.settings.temp_directory, self.settings.disk_reserve_bytes
@@ -44,7 +55,7 @@ class DuckDBEngine:
         try:
             self.configure_connection(conn)
             if create_source_views:
-                self._create_read_only_views(conn)
+                self._create_read_only_views(conn, objects)
             yield conn
         finally:
             conn.close()
@@ -60,10 +71,14 @@ class DuckDBEngine:
             raise KeyError(f"unknown configured object: {object_name}")
         return f"ff_source_{object_name}"
 
-    def _create_read_only_views(self, conn: duckdb.DuckDBPyConnection) -> None:
-        for object_name in self.catalog.object_names:
+    def _create_read_only_views(
+        self, conn: duckdb.DuckDBPyConnection, objects: Iterable[str] | None = None
+    ) -> None:
+        names = self.catalog.object_names if objects is None else tuple(objects)
+        for object_name in names:
             spec = self.catalog.get(object_name)
-            assert spec is not None
+            if spec is None:
+                raise KeyError(f"unknown configured object: {object_name}")
             if spec.mode == "read_only":
                 self._create_parquet_or_csv_view(conn, spec)
             else:

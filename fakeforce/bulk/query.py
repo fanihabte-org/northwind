@@ -74,7 +74,7 @@ class BulkQueryWorker:
         part_number = max((int(part["part"]) for part in manifest_parts), default=-1) + 1
         written_parts = 0
 
-        with self.engine.connection() as connection:
+        with self.engine.connection(objects=(plan.object_name,)) as connection:
             cursor = connection.execute(plan.sql, plan.parameters)
             columns = [column[0] for column in cursor.description]
             public_indexes = [

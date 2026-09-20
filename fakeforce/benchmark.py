@@ -76,6 +76,7 @@ class BenchmarkReport:
     object_name: str
     query: str
     delta_partitions: int
+    catalog_objects: int
     source_file_count: int
     source_bytes: int
     page_size: int
@@ -92,6 +93,7 @@ class BenchmarkReport:
             "object": self.object_name,
             "query": self.query,
             "delta_partitions": self.delta_partitions,
+            "catalog_objects": self.catalog_objects,
             "source_file_count": self.source_file_count,
             "source_bytes": self.source_bytes,
             "page_size": self.page_size,
@@ -158,11 +160,19 @@ def build_delta_fixture(
     rows_per_delta: int = 500,
     seed: int = 20260728,
     baseline: date = date(2026, 7, 24),
+    companions: int = 0,
 ) -> Path:
     """Write a deterministic base file plus ``delta_partitions`` daily deltas.
 
     Each delta updates rows that already exist in the base, which is the case
-    that forces deduplication to do real work.  Returns the catalog path.
+    that forces deduplication to do real work.
+
+    ``companions`` adds that many further objects to the catalog, each with the
+    same shape.  The deployed catalog holds several objects and views are built
+    per connection, so a benchmark with a single object cannot see the cost an
+    unscoped connection pays for objects the query never reads.
+
+    Returns the catalog path.
     """
     if base_rows <= 0:
         raise ValueError("base_rows must be greater than zero")
@@ -196,29 +206,45 @@ def build_delta_fixture(
             compression="zstd",
         )
 
+    entries = [_catalog_entry(object_name, base_path.name)]
+    for index in range(companions):
+        companion = f"Companion{index}"
+        companion_base = data_root / f"crm_{companion.lower()}.parquet"
+        pq.write_table(
+            pa.table(_rows(base_ids, baseline, generator), schema=schema),
+            companion_base,
+            compression="zstd",
+        )
+        for offset in range(1, delta_partitions + 1):
+            business_date = baseline + timedelta(days=offset)
+            updated = generator.sample(base_ids, min(rows_per_delta, len(base_ids)))
+            partition = data_root / companion.lower() / f"business_date={business_date.isoformat()}"
+            partition.mkdir(parents=True, exist_ok=True)
+            pq.write_table(
+                pa.table(_rows(updated, business_date, generator), schema=schema),
+                partition / "delta.parquet",
+                compression="zstd",
+            )
+        entries.append(_catalog_entry(companion, companion_base.name))
+
     catalog_path = root / "catalog.json"
     catalog_path.write_text(
-        json.dumps(
-            {
-                "version": 1,
-                "objects": [
-                    {
-                        "name": object_name,
-                        "sources": [base_path.name],
-                        "delta_patterns": [f"{object_name.lower()}/**/*.parquet"],
-                        "version_field": "SystemModstamp",
-                        "compatibility_aliases": {"SystemModstamp": "LastModifiedDate"},
-                        "id_field": "Id",
-                        "soft_delete_field": "IsDeleted",
-                        "mode": "read_only",
-                    }
-                ],
-            },
-            indent=2,
-        ),
-        encoding="utf-8",
+        json.dumps({"version": 1, "objects": entries}, indent=2), encoding="utf-8"
     )
     return catalog_path
+
+
+def _catalog_entry(object_name: str, base_file: str) -> dict[str, Any]:
+    return {
+        "name": object_name,
+        "sources": [base_file],
+        "delta_patterns": [f"{object_name.lower()}/**/*.parquet"],
+        "version_field": "SystemModstamp",
+        "compatibility_aliases": {"SystemModstamp": "LastModifiedDate"},
+        "id_field": "Id",
+        "soft_delete_field": "IsDeleted",
+        "mode": "read_only",
+    }
 
 
 def benchmark_read_path(
@@ -246,8 +272,9 @@ def benchmark_read_path(
     sources = spec.current_sources()
     source_bytes = sum(path.stat().st_size for path in sources)
 
-    def open_connection(create_views: bool) -> None:
-        with engine.connection(create_source_views=create_views):
+    def open_connection(create_views: bool, scoped: bool = False) -> None:
+        objects = (spec.object_name,) if scoped else None
+        with engine.connection(create_source_views=create_views, objects=objects):
             pass
 
     phases = [
@@ -255,6 +282,9 @@ def benchmark_read_path(
         time_phase("source_resolution", spec.current_sources, iterations),
         time_phase("connect_without_views", lambda: open_connection(False), iterations),
         time_phase("connect_with_views", lambda: open_connection(True), iterations),
+        time_phase(
+            "connect_scoped_view", lambda: open_connection(True, scoped=True), iterations
+        ),
         time_phase("query_plan", lambda: service.plan(soql, False), iterations),
         time_phase(
             "first_page",
@@ -269,7 +299,12 @@ def benchmark_read_path(
             iterations,
         ),
     ]
-    phases.append(_derive("view_construction", phases, "connect_with_views", "connect_without_views"))
+    phases.append(
+        _derive("view_construction", phases, "connect_with_views", "connect_without_views")
+    )
+    phases.append(
+        _derive("scoped_view_construction", phases, "connect_scoped_view", "connect_without_views")
+    )
     phases.append(
         _derive("cursor_index", phases, "first_page_with_cursor_index", "first_page")
     )
@@ -278,6 +313,7 @@ def benchmark_read_path(
         object_name=spec.object_name,
         query=soql,
         delta_partitions=max(0, len(sources) - 1),
+        catalog_objects=len(catalog.object_names),
         source_file_count=len(sources),
         source_bytes=source_bytes,
         page_size=page_size,
@@ -317,6 +353,7 @@ def run_delta_sweep(
     page_size: int = DEFAULT_PAGE_SIZE,
     iterations: int = DEFAULT_ITERATIONS,
     workspace: Path | None = None,
+    companions: int = 0,
 ) -> list[BenchmarkReport]:
     """Measure the same query against a growing number of delta partitions."""
     reports: list[BenchmarkReport] = []
@@ -335,6 +372,7 @@ def run_delta_sweep(
                 base_rows=base_rows,
                 delta_partitions=delta_partitions,
                 rows_per_delta=rows_per_delta,
+                companions=companions,
             )
             settings = _settings_for(catalog_path, root / "state")
             catalog = DatasetCatalog.from_file(settings.catalog_path, settings.data_roots)
@@ -377,6 +415,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--object", default="Opportunity")
     parser.add_argument("--base-rows", type=int, default=50_000)
     parser.add_argument("--rows-per-delta", type=int, default=500)
+    parser.add_argument(
+        "--companions",
+        type=int,
+        default=0,
+        help="extra catalog objects the query never reads (default: 0)",
+    )
     parser.add_argument("--page-size", type=int, default=DEFAULT_PAGE_SIZE)
     parser.add_argument("--iterations", type=int, default=DEFAULT_ITERATIONS)
     parser.add_argument(
@@ -411,6 +455,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             rows_per_delta=args.rows_per_delta,
             page_size=args.page_size,
             iterations=args.iterations,
+            companions=args.companions,
         )
 
     payload = json.dumps(

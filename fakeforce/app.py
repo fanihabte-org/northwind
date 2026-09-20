@@ -53,6 +53,7 @@ from typing import Any
 import pyarrow as pa
 
 from fastapi import FastAPI, Header, HTTPException, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, StreamingResponse
 
 from fakeforce.catalog import DatasetCatalog
@@ -186,6 +187,20 @@ def require_token(authorization: str | None) -> None:
 @app.exception_handler(SalesforceAuthenticationError)
 async def salesforce_authentication_error(_, error: SalesforceAuthenticationError):
     return sf_error(401, "INVALID_SESSION_ID", error.message)
+
+
+@app.exception_handler(RequestValidationError)
+async def salesforce_shaped_validation_error(_, error: RequestValidationError):
+    """A missing/malformed request param, shaped like Salesforce, not FastAPI's {"detail": ...}."""
+    first = error.errors()[0]
+    field = ".".join(str(part) for part in first["loc"][1:]) or "request"
+    return sf_error(400, "MALFORMED_QUERY", f"{field}: {first['msg']}")
+
+
+@app.exception_handler(json.JSONDecodeError)
+async def salesforce_shaped_json_error(_, error: json.JSONDecodeError):
+    """Malformed JSON in a request body, shaped like Salesforce, not an unhandled 500."""
+    return sf_error(400, "JSON_PARSER_ERROR", f"Cannot parse request body: {error.msg}")
 
 
 # --------------------------------------------------------------------------

@@ -6,10 +6,12 @@ import csv
 import gzip
 import hashlib
 import json
+import os
 import re
-from dataclasses import dataclass
-from pathlib import Path
-from typing import Any, Iterable
+import threading
+from dataclasses import dataclass, field
+from pathlib import Path, PurePosixPath
+from typing import Any, Callable, Iterable
 
 import pyarrow as pa
 import pyarrow.parquet as pq
@@ -31,6 +33,77 @@ _DECLARED_FIELD_TYPES = {
 }
 
 
+_MISSING = object()
+_WILDCARDS = ("*", "?", "[")
+
+
+def _file_signature(path: Path) -> tuple[int, int] | None:
+    """Size and modification time, or None when the file is absent."""
+    try:
+        status = path.stat()
+    except OSError:
+        return None
+    return status.st_size, status.st_mtime_ns
+
+
+def _directory_signature(directory: Path) -> tuple[Any, ...]:
+    """Signature of a delta directory's immediate entries.
+
+    One ``scandir`` replaces a recursive glob.  Entry modification times are
+    included so that a partition rewritten in place is still noticed, not only
+    a newly created one.
+    """
+    try:
+        with os.scandir(directory) as entries:
+            children = sorted(
+                (entry.name, _entry_modified_ns(entry)) for entry in entries
+            )
+    except OSError:
+        return ()
+    return tuple(children)
+
+
+def _entry_modified_ns(entry: os.DirEntry) -> int:
+    try:
+        return entry.stat(follow_symlinks=False).st_mtime_ns
+    except OSError:
+        return 0
+
+
+class _ResolutionCache:
+    """Thread-safe memo for a value derived from the filesystem.
+
+    FakeForce resolves sources and recomputes its snapshot identifier on every
+    request, but both answers change only when the simulator publishes a
+    partition or the seed is regenerated.  Each is therefore memoized behind a
+    cheap fingerprint, and recomputed only when that fingerprint moves.
+    """
+
+    __slots__ = ("_lock", "_fingerprint", "_value")
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._fingerprint: Any = _MISSING
+        self._value: Any = _MISSING
+
+    def get(self, fingerprint: Any, compute: Callable[[], Any]) -> Any:
+        with self._lock:
+            if self._value is _MISSING or self._fingerprint != fingerprint:
+                self._value = compute()
+                self._fingerprint = fingerprint
+            return self._value
+
+    def peek(self) -> Any:
+        """The last computed value, or None when nothing is cached yet."""
+        with self._lock:
+            return None if self._value is _MISSING else self._value
+
+    def invalidate(self) -> None:
+        with self._lock:
+            self._fingerprint = _MISSING
+            self._value = _MISSING
+
+
 @dataclass(frozen=True)
 class DatasetSpec:
     object_name: str
@@ -43,19 +116,83 @@ class DatasetSpec:
     delta_patterns: tuple[str, ...] = ()
     version_field: str | None = None
     compatibility_aliases: tuple[tuple[str, str], ...] = ()
+    _cache: _ResolutionCache = field(
+        default_factory=_ResolutionCache, compare=False, repr=False
+    )
 
     def current_sources(self) -> tuple[Path, ...]:
-        """Base files plus optional Parquet deltas published after startup."""
+        """Base files plus optional Parquet deltas published after startup.
+
+        The glob behind this is recursive and runs on every connection, so the
+        resolved set is memoized and re-derived only when the structural
+        fingerprint shows a file was added or removed.  Rewriting a file in
+        place cannot change which files exist, so it does not belong here --
+        ``content_fingerprint`` covers that for snapshot identity.
+        """
+        return self._cache.get(self.structural_fingerprint(), self._resolve_sources)
+
+    def refresh(self) -> None:
+        """Force the next resolution to re-read the filesystem."""
+        self._cache.invalidate()
+
+    def _resolve_sources(self) -> tuple[Path, ...]:
         deltas: list[Path] = []
         for pattern in self.delta_patterns:
             deltas.extend(DatasetCatalog._expand_source(pattern, self.data_roots))
         return tuple(sorted(set((*self.sources, *deltas))))
+
+    def delta_roots(self) -> tuple[Path, ...]:
+        """Directories a delta pattern can publish into, without walking them."""
+        roots: list[Path] = []
+        for pattern in self.delta_patterns:
+            prefix: list[str] = []
+            for segment in PurePosixPath(pattern).parts:
+                if any(wildcard in segment for wildcard in _WILDCARDS):
+                    break
+                prefix.append(segment)
+            for root in self.data_roots:
+                roots.append(root.joinpath(*prefix) if prefix else root)
+        return tuple(sorted(set(roots)))
+
+    def structural_fingerprint(self) -> tuple[Any, ...]:
+        """A signature that moves whenever the *set* of source files can differ.
+
+        Base files are signed directly, so a regenerated seed is noticed.  Each
+        delta root is signed by its immediate entries and their modification
+        times, so a partition published, removed, or written into is noticed --
+        the simulator publishes through ``os.replace`` into the partition
+        directory, which updates that directory.
+
+        Nothing here reads the cache it guards, so the first call is already
+        stable.
+        """
+        entries: list[tuple[Any, ...]] = [
+            ("base", str(path), _file_signature(path)) for path in self.sources
+        ]
+        entries.extend(
+            ("delta", str(directory), _directory_signature(directory))
+            for directory in self.delta_roots()
+        )
+        return tuple(entries)
+
+    def content_fingerprint(self) -> tuple[Any, ...]:
+        """The structural signature plus every resolved file's own signature.
+
+        Cursor validity is pinned to snapshot identity, so a file rewritten in
+        place must invalidate it even though the set of files is unchanged.
+        This is the exact guarantee the uncached implementation gave.
+        """
+        return (
+            self.structural_fingerprint(),
+            tuple((str(path), _file_signature(path)) for path in self.current_sources()),
+        )
 
 
 class DatasetCatalog:
     """A validated, metadata-only view of configured disk datasets."""
 
     def __init__(self, objects: Iterable[DatasetSpec]) -> None:
+        self._snapshot_cache = _ResolutionCache()
         self._objects = {obj.object_name: obj for obj in objects}
         if not self._objects:
             raise CatalogError("catalog must expose at least one object")
@@ -229,9 +366,27 @@ class DatasetCatalog:
         """Resolve an API object name case-insensitively to its canonical spelling."""
         return self._objects_by_casefold.get(object_name.casefold())
 
+    def refresh(self) -> None:
+        """Force every cached source resolution to re-read the filesystem."""
+        self._snapshot_cache.invalidate()
+        for spec in self._objects.values():
+            spec.refresh()
+
     @property
     def snapshot_id(self) -> str:
-        """Stable identifier for the exact files and schemas in this catalog."""
+        """Stable identifier for the exact files and schemas in this catalog.
+
+        Cursor validity is pinned to this value, so it is computed from a full
+        per-file signature.  That work is memoized behind the same fingerprint
+        the source resolution uses, because this property is read on every
+        cursor creation and every page of every extract.
+        """
+        fingerprint = tuple(
+            self._objects[name].content_fingerprint() for name in sorted(self._objects)
+        )
+        return self._snapshot_cache.get(fingerprint, self._compute_snapshot_id)
+
+    def _compute_snapshot_id(self) -> str:
         payload = []
         for object_name in sorted(self._objects):
             spec = self._objects[object_name]

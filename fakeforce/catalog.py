@@ -34,6 +34,8 @@ _DECLARED_FIELD_TYPES = {
 
 
 _MISSING = object()
+COMPACTED_DIRECTORY = "compacted"
+COMPACTED_BASE_FILENAME = "base.parquet"
 _WILDCARDS = ("*", "?", "[")
 
 
@@ -136,10 +138,40 @@ class DatasetSpec:
         self._cache.invalidate()
 
     def _resolve_sources(self) -> tuple[Path, ...]:
+        return tuple(sorted(set((*self.effective_base(), *self.published_deltas()))))
+
+    def compacted_base(self) -> Path | None:
+        """A merged file that stands in for the configured base, if one exists.
+
+        The seed is the generator's deterministic output and is mounted
+        read-only where FakeForce runs, so compaction cannot rewrite it. It
+        writes the merged object here instead, and this file then supersedes
+        the configured base entirely -- every row it would have contributed is
+        already in here.
+        """
+        for root in self.delta_roots():
+            candidate = root / COMPACTED_DIRECTORY / COMPACTED_BASE_FILENAME
+            if candidate.is_file():
+                return candidate
+        return None
+
+    def effective_base(self) -> tuple[Path, ...]:
+        """The files that hold one row per id before any delta is applied."""
+        compacted = self.compacted_base()
+        return (compacted,) if compacted is not None else self.sources
+
+    def published_deltas(self) -> tuple[Path, ...]:
+        """Partitions published since the last compaction."""
         deltas: list[Path] = []
         for pattern in self.delta_patterns:
             deltas.extend(DatasetCatalog._expand_source(pattern, self.data_roots))
-        return tuple(sorted(set((*self.sources, *deltas))))
+        return tuple(
+            sorted(
+                path
+                for path in set(deltas)
+                if path.parent.name != COMPACTED_DIRECTORY
+            )
+        )
 
     def delta_roots(self) -> tuple[Path, ...]:
         """Directories a delta pattern can publish into, without walking them."""

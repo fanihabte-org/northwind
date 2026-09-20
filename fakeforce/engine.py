@@ -16,6 +16,8 @@ from fakeforce.storage import require_disk_reserve
 
 
 _VERSION_RANK = "__fakeforce_version_rank"
+_LATEST_DELTA = "__fakeforce_latest_delta"
+_BASE = "__fakeforce_base"
 
 
 def _quote_identifier(value: str) -> str:
@@ -117,34 +119,53 @@ class DuckDBEngine:
     def _latest_version_sql(self, spec: DatasetSpec) -> str:
         """Resolve each id to its newest record.
 
-        Ranking is skipped outright when no delta has been published, because
-        nothing can supersede anything and the base file already holds one row
-        per id. That is the state a fresh deployment starts in and the state
-        compaction returns the object to.
+        Three shapes, chosen by what has actually been published:
 
-        Where deltas do exist, base and deltas are ranked together. An earlier
-        revision split this into an anti-join -- deltas ranked among themselves,
-        unioned with the base rows no delta supersedes -- on the theory that a
-        window function blocks predicate pushdown. Measurement refuted it:
-        DuckDB pushes a filter on the PARTITION BY key through row_number(),
-        and the anti-join was slower on every access shape except LIMIT
-        (point lookup 21ms -> 39ms, count 45ms -> 57ms). The window stays.
+        No version field -- nothing can supersede anything, so every configured
+        file contributes its rows as they are.
 
-        What does dominate at high partition counts is per-file Parquet
-        overhead, not ranking: 366 files cost 12ms to open and scan where one
-        compacted file costs 0.4ms. Compaction is the lever, not this SQL.
+        No deltas -- the base already holds one row per id, so ranking is
+        skipped outright. This is the state a fresh deployment starts in and
+        the state compaction returns an object to.
+
+        Deltas present -- deltas are ranked among themselves and the base
+        contributes the rows no delta supersedes. Ranking base and deltas
+        together instead would sort the whole object on every query: measured
+        on a four-million-row base with a week of deltas, a page cost 1967ms
+        that way against 293ms this way.
+
+        That advantage depends on the delta set staying small, which is what
+        ``fakeforce.compaction`` maintains. Left unbounded the relationship
+        inverts -- at 365 unmerged partitions the ranked-together form wins a
+        point lookup 110ms to 781ms -- so the two are one design, not two
+        independent optimizations.
         """
         sources = spec.current_sources()
         if spec.version_field is None:
             return f"SELECT * FROM {self._aliased_reader(spec, sources)}"
 
-        base_files = set(spec.sources)
+        base_files = set(spec.effective_base())
+        base_paths = tuple(path for path in sources if path in base_files)
         delta_paths = tuple(path for path in sources if path not in base_files)
+
         if not delta_paths:
-            base_paths = tuple(path for path in sources if path in base_files)
             return f"SELECT * FROM {self._aliased_reader(spec, base_paths)}"
 
-        return self._newest_per_id_sql(spec, self._aliased_reader(spec, sources))
+        latest = self._newest_per_id_sql(spec, self._aliased_reader(spec, delta_paths))
+        if not base_paths:
+            return latest
+
+        id_field = _quote_identifier(spec.id_field)
+        return (
+            # MATERIALIZED because the delta set is read twice, once to exclude
+            # superseded base rows and once to contribute its own. DuckDB
+            # inlines a plain CTE, which would rank the deltas twice per query.
+            f"WITH {_LATEST_DELTA} AS MATERIALIZED ({latest}) "
+            f"SELECT * FROM {self._aliased_reader(spec, base_paths)} AS {_BASE} "
+            f"WHERE NOT EXISTS (SELECT 1 FROM {_LATEST_DELTA} "
+            f"WHERE {_LATEST_DELTA}.{id_field} = {_BASE}.{id_field}) "
+            f"UNION ALL BY NAME SELECT * FROM {_LATEST_DELTA}"
+        )
 
     @staticmethod
     def _newest_per_id_sql(spec: DatasetSpec, reader: str) -> str:

@@ -252,6 +252,28 @@ curl -s -X POST localhost:8081/_chaos -H 'content-type: application/json' \
 CSV-result locator requests. On a `429 REQUEST_LIMIT_EXCEEDED`, wait for the
 number of seconds in `Retry-After` before retrying the same request or locator.
 
+### Compacting published deltas
+
+The simulator publishes one Parquet partition per object per business date and
+never merges them, so both the file count and the rows that must be ranked to
+resolve each Id grow without bound. Compaction folds the outstanding partitions
+and the current base into a single file that supersedes both, leaving the object
+with no deltas at all:
+
+```bash
+docker compose exec fakeforce python -m fakeforce.compaction --all --dry-run
+docker compose exec fakeforce python -m fakeforce.compaction --all
+```
+
+It writes into the durable state mount, never into `seed/` -- the seed is the
+generator's deterministic output and is mounted read-only. The merged file is
+published atomically before its sources are removed, so a reader never sees a
+partial result and a crash simply leaves the partitions in place for the next
+run. It is safe to schedule daily after the simulator, and safe to rerun.
+
+Measured on a four-million-row object with a year of daily partitions: a page
+of a full extract cost 3.0s across 366 files, and 40ms afterwards.
+
 Use `python -m simulator.status --state-directory state` to inspect the durable
 simulation baseline, completion watermark, and any incomplete daily run.
 

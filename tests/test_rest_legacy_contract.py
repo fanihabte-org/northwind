@@ -6,6 +6,7 @@ behind it.  They remain valid while FF-004 replaces the data repository.
 
 from __future__ import annotations
 
+import json
 from collections.abc import Iterator
 from uuid import uuid4
 
@@ -273,6 +274,89 @@ def test_bulk_query_results_reject_unavailable_jobs_and_invalid_locators(
     assert pending.json()[0]["errorCode"] == "INVALIDJOB"
     assert missing.status_code == 404
     assert missing.json()[0]["errorCode"] == "NOT_FOUND"
+
+
+def test_get_deleted_requires_a_start_and_end_window(
+    client: TestClient, auth_headers: dict[str, str]
+) -> None:
+    response = client.get(
+        "/services/data/v60.0/sobjects/Opportunity/deleted", headers=auth_headers
+    )
+
+    assert response.status_code == 400
+    assert response.json()[0]["errorCode"] == "MALFORMED_QUERY"
+
+
+def test_get_deleted_rejects_windows_over_thirty_days(
+    client: TestClient, auth_headers: dict[str, str]
+) -> None:
+    response = client.get(
+        "/services/data/v60.0/sobjects/Opportunity/deleted",
+        params={"start": "2024-01-01T00:00:00Z", "end": "2024-03-01T00:00:00Z"},
+        headers=auth_headers,
+    )
+
+    assert response.status_code == 400
+    assert response.json()[0]["errorCode"] == "INVALID_DATE_RANGE"
+
+
+def test_get_deleted_only_returns_ids_removed_inside_the_window(
+    client: TestClient, auth_headers: dict[str, str], tmp_path, monkeypatch
+) -> None:
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+
+    from fakeforce.catalog import DatasetCatalog
+    from fakeforce.config import Settings
+    from fakeforce.engine import DuckDBEngine
+
+    data = tmp_path / "data"
+    data.mkdir()
+    pq.write_table(
+        pa.table({
+            "Id": ["001", "002", "003", "004"],
+            "IsDeleted": [True, True, False, True],
+            "LastModifiedDate": [
+                "2024-01-15T00:00:00",  # inside the window
+                "2024-01-05T00:00:00",  # before the window
+                "2024-01-15T00:00:00",  # not deleted
+                "2024-01-25T00:00:00",  # after the window
+            ],
+        }),
+        data / "opportunities.parquet",
+    )
+    catalog_path = tmp_path / "catalog.json"
+    catalog_path.write_text(json.dumps({
+        "version": 1,
+        "objects": [{
+            "name": "Opportunity",
+            "sources": ["opportunities.parquet"],
+            "id_field": "Id",
+            "soft_delete_field": "IsDeleted",
+            "mode": "read_only",
+        }],
+    }))
+    settings = Settings.from_env({
+        "FAKEFORCE_SEED_DIR": str(data),
+        "FAKEFORCE_DATA_ROOTS": str(data),
+        "FAKEFORCE_CATALOG_PATH": str(catalog_path),
+        "FAKEFORCE_STATE_DIR": str(tmp_path / "state"),
+    })
+    catalog = DatasetCatalog.from_file(catalog_path, settings.data_roots)
+    monkeypatch.setattr(fakeforce, "CATALOG", catalog)
+    monkeypatch.setattr(fakeforce, "ENGINE", DuckDBEngine(settings, catalog))
+
+    response = client.get(
+        "/services/data/v60.0/sobjects/Opportunity/deleted",
+        params={"start": "2024-01-10T00:00:00Z", "end": "2024-01-20T00:00:00Z"},
+        headers=auth_headers,
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert [r["id"] for r in body["deletedRecords"]] == ["001"]
+    assert body["earliestDateAvailable"] == "2024-01-10T00:00:00Z"
+    assert body["latestDateCovered"] == "2024-01-20T00:00:00Z"
 
 
 def test_bulk_ingest_job_uploads_csv_to_disk_then_closes_durably(

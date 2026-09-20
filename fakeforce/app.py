@@ -416,6 +416,14 @@ def describe(obj: str, authorization: str | None = Header(default=None)):
     return {"name": obj, "label": obj, "queryable": True, "fields": fields}
 
 
+def _parse_window_bound(value: str) -> datetime:
+    text = value[:-1] + "+00:00" if value.endswith("Z") else value
+    parsed = datetime.fromisoformat(text)
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed
+
+
 @app.get(f"/services/data/{API_VERSION}/sobjects/{{obj}}/deleted")
 def get_deleted(obj: str, start: str = "", end: str = "",
                 authorization: str | None = Header(default=None)):
@@ -424,22 +432,40 @@ def get_deleted(obj: str, start: str = "", end: str = "",
     spec = CATALOG.get(obj)
     if spec is None:
         return sf_error(404, "NOT_FOUND", f"The requested resource does not exist: {obj}")
+    if not start or not end:
+        return sf_error(400, "MALFORMED_QUERY", "startDate and endDate are required")
+    try:
+        start_dt = _parse_window_bound(start)
+        end_dt = _parse_window_bound(end)
+    except ValueError:
+        return sf_error(400, "MALFORMED_QUERY", "startDate and endDate must be ISO8601 timestamps")
+    if end_dt < start_dt:
+        return sf_error(400, "INVALID_DATE_RANGE", "endDate must not be before startDate")
+    if end_dt - start_dt > timedelta(days=30):
+        return sf_error(400, "INVALID_DATE_RANGE", "the date range must not exceed 30 days")
+
     if spec.soft_delete_field is None:
         records = []
     else:
         date_field = "LastModifiedDate" if "LastModifiedDate" in spec.schema.names else spec.id_field
         from fakeforce.engine import _quote_identifier
+        # LastModifiedDate is stored as a Salesforce-shaped ISO8601 string,
+        # always UTC (+0000), so a naive-UTC cast and comparison is exact.
+        start_naive = start_dt.astimezone(timezone.utc).replace(tzinfo=None)
+        end_naive = end_dt.astimezone(timezone.utc).replace(tzinfo=None)
         with ENGINE.connection() as conn:
             rows = conn.execute(
                 f"SELECT {_quote_identifier(spec.id_field)}, {_quote_identifier(date_field)} "
                 f"FROM {_quote_identifier(ENGINE.relation_name(obj))} "
-                f"WHERE {_quote_identifier(spec.soft_delete_field)}"
+                f"WHERE {_quote_identifier(spec.soft_delete_field)} "
+                f"AND CAST({_quote_identifier(date_field)} AS TIMESTAMP) BETWEEN ? AND ?",
+                [start_naive, end_naive],
             ).fetchall()
         records = [{"id": row[0], "deletedDate": row[1]} for row in rows]
     return {
         "deletedRecords": records,
-        "earliestDateAvailable": start or None,
-        "latestDateCovered": end or None,
+        "earliestDateAvailable": start,
+        "latestDateCovered": end,
     }
 
 

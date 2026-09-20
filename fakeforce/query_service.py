@@ -143,17 +143,26 @@ class LazyQueryService:
             sql += f" OFFSET {ast.offset}"
         return QueryPlan(object_name, fields, spec.id_field, source_sql, sql, tuple(parameters))
 
+    def _scoped_connection(self, plan: QueryPlan):
+        """A connection carrying only the view this plan reads."""
+        return lambda: self.engine.connection(objects=(plan.object_name,))
+
+    def _with_connection(self, plan: QueryPlan, work):
+        return run_with_deadline(
+            self._scoped_connection(plan),
+            work,
+            self.engine.settings.sync_query_timeout_seconds,
+        )
+
     def fetch_page(
         self, query: str, include_deleted: bool, page_size: int, page_offset: int = 0
     ) -> QueryPage:
         if page_size <= 0 or page_offset < 0:
             raise ValueError("page size and page offset must be non-negative")
-        return run_with_deadline(
-            self.engine.connection,
-            lambda connection: self._execute_page(
-                connection, query, include_deleted, page_size, page_offset
-            ),
-            self.engine.settings.sync_query_timeout_seconds,
+        plan = self.plan(query, include_deleted)
+        return self._with_connection(
+            plan,
+            lambda connection: self._execute_page(connection, plan, page_size, page_offset),
         )
 
     def fetch_page_with_cursor_index(
@@ -167,29 +176,17 @@ class LazyQueryService:
     ) -> tuple[QueryPage, Path | None]:
         if page_size <= 0 or page_offset < 0:
             raise ValueError("page size and page offset must be non-negative")
-        return run_with_deadline(
-            self.engine.connection,
+        plan = self.plan(query, include_deleted)
+        return self._with_connection(
+            plan,
             lambda connection: self._execute_page_with_cursor_index(
-                connection,
-                query,
-                include_deleted,
-                page_size,
-                page_offset,
-                locator_id,
-                artifacts,
+                connection, plan, page_size, page_offset, locator_id, artifacts
             ),
-            self.engine.settings.sync_query_timeout_seconds,
         )
 
     def _execute_page(
-        self,
-        connection: Any,
-        query: str,
-        include_deleted: bool,
-        page_size: int,
-        page_offset: int,
+        self, connection: Any, plan: QueryPlan, page_size: int, page_offset: int
     ) -> QueryPage:
-        plan = self.plan(query, include_deleted)
         total_size = connection.execute(
             f"SELECT count(*) FROM ({plan.sql}) AS result", plan.parameters
         ).fetchone()[0]
@@ -205,14 +202,12 @@ class LazyQueryService:
     def _execute_page_with_cursor_index(
         self,
         connection: Any,
-        query: str,
-        include_deleted: bool,
+        plan: QueryPlan,
         page_size: int,
         page_offset: int,
         locator_id: str,
         artifacts: CursorArtifactStore,
     ) -> tuple[QueryPage, Path | None]:
-        plan = self.plan(query, include_deleted)
         total_size = connection.execute(
             f"SELECT count(*) FROM ({plan.sql}) AS result", plan.parameters
         ).fetchone()[0]
@@ -234,13 +229,38 @@ class LazyQueryService:
     ) -> list[dict[str, Any]]:
         if not record_ids:
             return []
-        return run_with_deadline(
-            self.engine.connection,
-            lambda connection: self._execute_records_by_ids(
-                connection, query, include_deleted, record_ids
-            ),
-            self.engine.settings.sync_query_timeout_seconds,
+        plan = self.plan(query, include_deleted)
+        return self._with_connection(
+            plan,
+            lambda connection: self._execute_records_by_ids(connection, plan, record_ids),
         )
+
+    def fetch_records_for_locator(
+        self,
+        query: str,
+        include_deleted: bool,
+        artifact_path: Path,
+        page_offset: int,
+        batch_size: int,
+        artifacts: CursorArtifactStore,
+    ) -> list[dict[str, Any]]:
+        """Read a cursor page's ids and its records under one connection.
+
+        Serving a page used to open two connections -- one to read the id index
+        and one to rehydrate the records -- so every page of every extract paid
+        the view-construction cost twice.
+        """
+        plan = self.plan(query, include_deleted)
+
+        def work(connection: Any) -> list[dict[str, Any]]:
+            record_ids = artifacts.read_page_ids(
+                connection, artifact_path, page_offset, batch_size
+            )
+            if not record_ids:
+                return []
+            return self._execute_records_by_ids(connection, plan, record_ids)
+
+        return self._with_connection(plan, work)
 
     def build_cursor_index(
         self,
@@ -249,31 +269,17 @@ class LazyQueryService:
         locator_id: str,
         artifacts: CursorArtifactStore,
     ) -> Path:
-        return run_with_deadline(
-            self.engine.connection,
-            lambda connection: self._write_cursor_index(
-                connection, query, include_deleted, locator_id, artifacts
-            ),
-            self.engine.settings.sync_query_timeout_seconds,
-        )
-
-    def _write_cursor_index(
-        self,
-        connection: Any,
-        query: str,
-        include_deleted: bool,
-        locator_id: str,
-        artifacts: CursorArtifactStore,
-    ) -> Path:
         plan = self.plan(query, include_deleted)
-        return artifacts.write_index(
-            connection, locator_id, plan.sql, plan.parameters, _INTERNAL_ID_FIELD
+        return self._with_connection(
+            plan,
+            lambda connection: artifacts.write_index(
+                connection, locator_id, plan.sql, plan.parameters, _INTERNAL_ID_FIELD
+            ),
         )
 
     def _execute_records_by_ids(
-        self, connection: Any, query: str, include_deleted: bool, record_ids: list[str]
+        self, connection: Any, plan: QueryPlan, record_ids: list[str]
     ) -> list[dict[str, Any]]:
-        plan = self.plan(query, include_deleted)
         placeholders = ", ".join("?" for _ in record_ids)
         cursor = connection.execute(
             f"SELECT * FROM ({plan.source_sql}) AS matching "

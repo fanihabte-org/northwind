@@ -118,10 +118,12 @@ def test_benchmark_reports_every_phase_with_non_negative_derived_costs(tmp_path)
         "source_resolution",
         "connect_without_views",
         "connect_with_views",
+        "connect_scoped_view",
         "query_plan",
         "first_page",
         "first_page_with_cursor_index",
         "view_construction",
+        "scoped_view_construction",
         "cursor_index",
     }
     assert {timing.name for timing in report.phases} == expected

@@ -47,6 +47,18 @@ API_VERSION = "v60.0"
 DEFAULT_ITERATIONS = 3
 DEFAULT_PAGE_SIZE = 2000
 
+# SimulationPolicy grows the population 8% a year, spread across 365 days, so a
+# day's delta touches roughly 0.02% of the object. A fixture that departs from
+# that ratio measures a system nobody runs: deltas sized as a large fraction of
+# the base make deduplication look unavoidable when in practice it is not.
+ANNUAL_GROWTH_RATE = 0.08
+DAYS_PER_YEAR = 365
+
+
+def daily_change_rows(base_rows: int) -> int:
+    """Rows a single business date changes, at the simulator's growth policy."""
+    return max(1, round(base_rows * ANNUAL_GROWTH_RATE / DAYS_PER_YEAR))
+
 
 @dataclass(frozen=True)
 class PhaseTiming:
@@ -157,7 +169,7 @@ def build_delta_fixture(
     object_name: str = "Opportunity",
     base_rows: int = 50_000,
     delta_partitions: int = 0,
-    rows_per_delta: int = 500,
+    rows_per_delta: int | None = None,
     seed: int = 20260728,
     baseline: date = date(2026, 7, 24),
     companions: int = 0,
@@ -178,6 +190,9 @@ def build_delta_fixture(
         raise ValueError("base_rows must be greater than zero")
     if delta_partitions < 0:
         raise ValueError("delta_partitions cannot be negative")
+    rows_per_delta = (
+        daily_change_rows(base_rows) if rows_per_delta is None else rows_per_delta
+    )
     if rows_per_delta <= 0:
         raise ValueError("rows_per_delta must be greater than zero")
 
@@ -349,7 +364,7 @@ def run_delta_sweep(
     *,
     object_name: str = "Opportunity",
     base_rows: int = 50_000,
-    rows_per_delta: int = 500,
+    rows_per_delta: int | None = None,
     page_size: int = DEFAULT_PAGE_SIZE,
     iterations: int = DEFAULT_ITERATIONS,
     workspace: Path | None = None,
@@ -414,7 +429,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     parser.add_argument("--object", default="Opportunity")
     parser.add_argument("--base-rows", type=int, default=50_000)
-    parser.add_argument("--rows-per-delta", type=int, default=500)
+    parser.add_argument(
+        "--rows-per-delta",
+        type=int,
+        default=None,
+        help="rows a delta changes (default: the simulator's 8%%/year growth policy)",
+    )
     parser.add_argument(
         "--companions",
         type=int,

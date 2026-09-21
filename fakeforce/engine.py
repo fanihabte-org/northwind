@@ -86,11 +86,35 @@ class DuckDBEngine:
                 raise KeyError(f"unknown configured object: {object_name}")
             if spec.mode == "read_only":
                 self._create_parquet_or_csv_view(conn, spec)
+            elif spec.mode == "computed":
+                self._create_computed_view(conn, spec)
             else:
                 conn.execute(
                     f"CREATE OR REPLACE VIEW {_quote_identifier(self.relation_name(spec.object_name))} "
                     f"AS SELECT * FROM {_quote_identifier(f'ff_mutable_{spec.object_name}')}"
                 )
+
+    def _create_computed_view(
+        self, conn: duckdb.DuckDBPyConnection, spec: DatasetSpec
+    ) -> None:
+        """A table of rows computed once at catalog load, not read from a file.
+
+        The whole table already lives in memory (EntityDefinition/FieldDefinition
+        are a handful of rows), so registering it needs no other object's view
+        to exist first -- unlike a live cross-object query, this can't conflict
+        with connections scoped to a single object. A real table rather than a
+        view over the registered Python object, so the registration is
+        connection-local scratch, not something a later query in the same
+        connection depends on staying registered.
+        """
+        assert spec.computed_table is not None
+        register_name = f"__fakeforce_computed_{spec.object_name}"
+        conn.register(register_name, spec.computed_table)
+        conn.execute(
+            f"CREATE OR REPLACE TABLE {_quote_identifier(self.relation_name(spec.object_name))} "
+            f"AS SELECT * FROM {_quote_identifier(register_name)}"
+        )
+        conn.unregister(register_name)
 
     def _create_parquet_or_csv_view(
         self, conn: duckdb.DuckDBPyConnection, spec: DatasetSpec

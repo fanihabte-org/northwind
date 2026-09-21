@@ -32,7 +32,10 @@ def test_catalog_discovers_configured_csv_without_hardcoded_object_mapping(tmp_p
     catalog = DatasetCatalog.from_file(catalog_path, [data_root])
     spec = catalog.get("Customer__c")
 
-    assert catalog.object_names == ("Customer__c",)
+    # EntityDefinition/FieldDefinition are always present on a loaded
+    # catalog -- they describe whatever objects are configured, not an
+    # opt-in extra. See test_metadata_catalog.py for their own behavior.
+    assert set(catalog.object_names) == {"Customer__c", "EntityDefinition", "FieldDefinition"}
     assert spec is not None
     assert spec.id_field == "record_key"
     assert spec.schema.names == ["record_key", "deleted", "name"]

@@ -10,6 +10,7 @@ import os
 import re
 import threading
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 from typing import Any, Callable, Iterable
 
@@ -118,6 +119,10 @@ class DatasetSpec:
     delta_patterns: tuple[str, ...] = ()
     version_field: str | None = None
     compatibility_aliases: tuple[tuple[str, str], ...] = ()
+    computed_table: pa.Table | None = None
+    supports_limit: bool = True
+    supports_ne: bool = True
+    required_filter_fields: tuple[str, ...] = ()
     _cache: _ResolutionCache = field(
         default_factory=_ResolutionCache, compare=False, repr=False
     )
@@ -254,6 +259,7 @@ class DatasetCatalog:
         names = [obj.object_name for obj in objects]
         if len(names) != len(set(names)):
             raise CatalogError("catalog object names must be unique")
+        objects.extend(_metadata_catalog_specs(tuple(objects)))
         return cls(objects)
 
     @staticmethod
@@ -441,3 +447,221 @@ class DatasetCatalog:
             )
         encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
         return hashlib.sha256(encoded).hexdigest()
+
+
+# --------------------------------------------------------------------------
+# Metadata Catalog: EntityDefinition and FieldDefinition
+#
+# These are "virtual" objects -- their rows are computed once from the rest
+# of the catalog, not read from a file. Salesforce's real Tooling API
+# restricts them in ways ordinary sObjects are not (see query_service.py's
+# use of supports_ne/required_filter_fields/supports_limit); that
+# restriction set is intentionally partial. COUNT(), GROUP BY, OR, NOT, and
+# INCLUDES are not implemented here because they are not implemented for any
+# object -- soql.py's grammar has no representation for them at all, so they
+# already fail to parse regardless of which sObject is queried. Teaching this
+# module to parse them just to then reject them for these two objects would
+# be a second, unscoped feature, not a restriction on an existing one.
+# --------------------------------------------------------------------------
+
+_ENTITY_DEFINITION_SCHEMA = pa.schema([
+    pa.field("DurableId", pa.string()),
+    pa.field("QualifiedApiName", pa.string()),
+    pa.field("DeveloperName", pa.string()),
+    pa.field("Label", pa.string()),
+    pa.field("PluralLabel", pa.string()),
+    pa.field("MasterLabel", pa.string()),
+    pa.field("KeyPrefix", pa.string()),
+    pa.field("IsQueryable", pa.bool_()),
+    pa.field("IsRetrieveable", pa.bool_()),
+    pa.field("IsIdEnabled", pa.bool_()),
+    pa.field("IsEverCreatable", pa.bool_()),
+    pa.field("IsEverUpdatable", pa.bool_()),
+    pa.field("IsEverDeletable", pa.bool_()),
+    pa.field("NamespacePrefix", pa.string()),
+    pa.field("LastModifiedDate", pa.timestamp("us", tz="UTC")),
+])
+
+_FIELD_DEFINITION_SCHEMA = pa.schema([
+    pa.field("DurableId", pa.string()),
+    pa.field("EntityDefinitionId", pa.string()),
+    pa.field("EntityDefinition.QualifiedApiName", pa.string()),
+    pa.field("QualifiedApiName", pa.string()),
+    pa.field("Label", pa.string()),
+    pa.field("DataType", pa.string()),
+    pa.field("ValueTypeId", pa.string()),
+    pa.field("Length", pa.int64()),
+    pa.field("Precision", pa.int64()),
+    pa.field("Scale", pa.int64()),
+    pa.field("IsNillable", pa.bool_()),
+    pa.field("IsNameField", pa.bool_()),
+    pa.field("IsIndexed", pa.bool_()),
+    pa.field("IsApiFilterable", pa.bool_()),
+    pa.field("IsApiSortable", pa.bool_()),
+    pa.field("IsApiGroupable", pa.bool_()),
+    pa.field("ReferenceTo", pa.string()),
+    pa.field("RelationshipName", pa.string()),
+])
+
+
+def _first_id_in_file(path: Path, id_field: str, length: int) -> str | None:
+    """The first Id in one source file, or None if it has no rows."""
+    if path.name.endswith(".parquet"):
+        column = pq.ParquetFile(path).read_row_group(0, columns=[id_field]).column(0)
+        if len(column) == 0 or column[0].as_py() is None:
+            return None
+        return str(column[0].as_py())[:length]
+    opener = gzip.open if path.name.endswith(".csv.gz") else open
+    with opener(path, "rt", newline="", encoding="utf-8") as stream:
+        first_row = next(csv.DictReader(stream), None)
+    return str(first_row[id_field])[:length] if first_row else None
+
+
+def _sample_id_prefix(spec: DatasetSpec, length: int = 3) -> str:
+    """First few characters of a real Id, mirroring Salesforce's KeyPrefix.
+
+    Reads only the configured base -- not ``current_sources()``, which also
+    globs delta partitions. That glob is lazy and memoized on first real use
+    (see test_catalog_resolution_cache.py); running it here, at catalog load,
+    would defeat the memoization test's premise that the *first* call after
+    construction is the one that walks the filesystem. A base with no rows of
+    its own (e.g. OpportunityHistory, where every row arrives as a delta)
+    falls back to a placeholder rather than chasing into deltas for it.
+    """
+    for path in spec.sources:
+        prefix = _first_id_in_file(path, spec.id_field, length)
+        if prefix is not None:
+            return prefix
+    return "000"
+
+
+def _field_type_info(
+    pa_field: pa.Field, spec: DatasetSpec, object_names: frozenset[str]
+) -> tuple[str, str, int | None, int | None, int | None, str | None]:
+    """(DataType, ValueTypeId, Length, Precision, Scale, ReferenceTo).
+
+    DataType is the UI display string Salesforce shows, not the API type
+    name. ReferenceTo is guessed from naming convention (an "XyzId" field
+    where "Xyz" is a configured object) since the catalog carries no formal
+    relationship metadata -- there is nothing else to derive it from.
+    """
+    name = pa_field.name
+    if name == spec.id_field:
+        return "Id", "xsd:string", 18, None, None, None
+    if name.endswith("Id"):
+        candidate = name[:-2]
+        if candidate in object_names:
+            return f"Lookup({candidate})", "xsd:string", 18, None, None, candidate
+    field_type = pa_field.type
+    if pa.types.is_boolean(field_type):
+        return "Checkbox", "xsd:boolean", None, None, None, None
+    if pa.types.is_integer(field_type):
+        return "Number(18, 0)", "xsd:int", None, 18, 0, None
+    if pa.types.is_floating(field_type):
+        return "Number(18, 2)", "xsd:double", None, 18, 2, None
+    if pa.types.is_date(field_type):
+        return "Date", "xsd:date", None, None, None, None
+    if pa.types.is_timestamp(field_type):
+        return "Date/Time", "xsd:dateTime", None, None, None, None
+    return "Text(255)", "xsd:string", 255, None, None, None
+
+
+def _entity_definition_spec(
+    objects: tuple[DatasetSpec, ...], key_prefixes: dict[str, str]
+) -> DatasetSpec:
+    rows = []
+    for spec in objects:
+        developer_name = (
+            spec.object_name[:-3] if spec.object_name.endswith("__c") else spec.object_name
+        )
+        modified = (
+            datetime.fromtimestamp(spec.sources[0].stat().st_mtime, tz=timezone.utc)
+            if spec.sources else datetime.fromtimestamp(0, tz=timezone.utc)
+        )
+        key_prefix = key_prefixes[spec.object_name]
+        rows.append({
+            "DurableId": key_prefix,
+            "QualifiedApiName": spec.object_name,
+            "DeveloperName": developer_name,
+            "Label": spec.object_name,
+            "PluralLabel": f"{spec.object_name}s",
+            "MasterLabel": spec.object_name,
+            "KeyPrefix": key_prefix,
+            "IsQueryable": True,
+            "IsRetrieveable": True,
+            "IsIdEnabled": True,
+            "IsEverCreatable": spec.mode == "mutable",
+            "IsEverUpdatable": spec.mode == "mutable",
+            "IsEverDeletable": spec.mode == "mutable",
+            "NamespacePrefix": None,
+            "LastModifiedDate": modified,
+        })
+    table = pa.Table.from_pylist(rows, schema=_ENTITY_DEFINITION_SCHEMA)
+    return DatasetSpec(
+        object_name="EntityDefinition",
+        sources=(),
+        id_field="DurableId",
+        soft_delete_field=None,
+        mode="computed",
+        schema=table.schema,
+        data_roots=(),
+        computed_table=table,
+        supports_limit=False,
+        supports_ne=False,
+    )
+
+
+def _field_definition_spec(
+    objects: tuple[DatasetSpec, ...], key_prefixes: dict[str, str]
+) -> DatasetSpec:
+    object_names = frozenset(spec.object_name for spec in objects)
+    rows = []
+    for spec in objects:
+        entity_id = key_prefixes[spec.object_name]
+        for pa_field in spec.schema:
+            name = pa_field.name
+            data_type, value_type_id, length, precision, scale, reference_to = _field_type_info(
+                pa_field, spec, object_names
+            )
+            rows.append({
+                "DurableId": f"{entity_id}.{name}",
+                "EntityDefinitionId": entity_id,
+                "EntityDefinition.QualifiedApiName": spec.object_name,
+                "QualifiedApiName": name,
+                "Label": name,
+                "DataType": data_type,
+                "ValueTypeId": value_type_id,
+                "Length": length,
+                "Precision": precision,
+                "Scale": scale,
+                "IsNillable": name != spec.id_field,
+                "IsNameField": name == "Name",
+                "IsIndexed": name in (spec.id_field, spec.soft_delete_field, spec.version_field),
+                "IsApiFilterable": True,
+                "IsApiSortable": True,
+                "IsApiGroupable": True,
+                "ReferenceTo": reference_to,
+                "RelationshipName": reference_to,
+            })
+    table = pa.Table.from_pylist(rows, schema=_FIELD_DEFINITION_SCHEMA)
+    return DatasetSpec(
+        object_name="FieldDefinition",
+        sources=(),
+        id_field="DurableId",
+        soft_delete_field=None,
+        mode="computed",
+        schema=table.schema,
+        data_roots=(),
+        computed_table=table,
+        supports_limit=False,
+        supports_ne=False,
+        required_filter_fields=("EntityDefinition.QualifiedApiName", "EntityDefinitionId"),
+    )
+
+
+def _metadata_catalog_specs(objects: tuple[DatasetSpec, ...]) -> tuple[DatasetSpec, ...]:
+    key_prefixes = {spec.object_name: _sample_id_prefix(spec) for spec in objects}
+    return (
+        _entity_definition_spec(objects, key_prefixes),
+        _field_definition_spec(objects, key_prefixes),
+    )

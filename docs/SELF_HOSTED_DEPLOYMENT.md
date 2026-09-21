@@ -42,6 +42,49 @@ be changed afterwards. Check the service with:
 docker compose logs -f simulator
 ```
 
+## CRM delta compaction
+
+The simulator publishes one Parquet partition per CRM object per business date
+and never merges them, so file count and per-query ranking cost both grow
+without bound. `fakeforce.compaction` folds the accumulated partitions into a
+single file holding one row per id, then removes the partitions it merged; it
+never touches the read-only seed, so it publishes the merged file as a delta
+of its own, alongside the partitions it replaces:
+
+```bash
+docker compose exec -T fakeforce python -m fakeforce.compaction --all --dry-run
+docker compose exec -T fakeforce python -m fakeforce.compaction --all
+```
+
+Safe to run while FakeForce is serving and safe to rerun: the merged file is
+published with `os.replace` before its sources are removed, so a reader in
+between sees both and resolves to the same answer either way, and a crash at
+any point just leaves the partitions in place for the next run to retry.
+
+It is a one-time operation each time it runs, not a daemon — the partition
+count grows again every night until it runs again. This deployment schedules
+it via host `cron` on the deploy server, not a Compose service, since it only
+needs to run once a day and doesn't need to stay resident. Installed as
+`fanihabte`'s crontab:
+
+```cron
+0 2 * * * cd /home/fanihabte/Projects/northwind && { echo "=== $(date -Is) ==="; docker compose exec -T fakeforce python -m fakeforce.compaction --all; } >> /home/fanihabte/logs/compaction.log 2>&1
+```
+
+02:00 local leaves a two-hour buffer after the simulator's exact-midnight
+wake for its own retry/backoff to finish first. Both the simulator container
+and the host run `TZ=America/Los_Angeles`, so no offset is needed on a
+deployment where that also holds; confirm with `timedatectl` if the host is
+in a different zone and adjust the cron hour accordingly. Tail
+`/home/fanihabte/logs/compaction.log` (or the equivalent path on a different
+deployment) to check recent runs.
+
+`FAKEFORCE_DATA_ROOTS` must list the writable state root, not only the
+read-only seed root, or every compaction run fails with a read-only
+filesystem error trying to write into the seed mount — `_compacted_path()`
+picks the first data root it finds actually writable, but if none of the
+configured roots are writable it has nothing to fall back to.
+
 ## Generated seed data
 
 `seed/` is intentionally ignored by Git: it can contain millions of records and

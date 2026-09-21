@@ -50,6 +50,7 @@ class QueryPlan:
     source_sql: str
     sql: str
     parameters: tuple[Any, ...]
+    has_order_by: bool = False
 
 
 @dataclass(frozen=True)
@@ -141,7 +142,10 @@ class LazyQueryService:
             sql += f" LIMIT {ast.limit}"
         if ast.offset:
             sql += f" OFFSET {ast.offset}"
-        return QueryPlan(object_name, fields, spec.id_field, source_sql, sql, tuple(parameters))
+        return QueryPlan(
+            object_name, fields, spec.id_field, source_sql, sql, tuple(parameters),
+            has_order_by=ast.order_by is not None,
+        )
 
     def _scoped_connection(self, plan: QueryPlan):
         """A connection carrying only the view this plan reads."""

@@ -12,7 +12,7 @@ from typing import Any
 
 from fakeforce.bulk.jobs import BulkJobState, BulkJobType
 from fakeforce.config import Settings
-from fakeforce.engine import DuckDBEngine
+from fakeforce.engine import DuckDBEngine, _quote_identifier
 from fakeforce.query_service import _INTERNAL_ID_FIELD, LazyQueryService
 from fakeforce.state import StateStore
 from fakeforce.storage import atomic_binary_writer, require_disk_reserve
@@ -59,6 +59,16 @@ class BulkQueryWorker:
 
     def _stream(self, job_id: str, query: str) -> BulkQueryResult:
         plan = self.query_service.plan(query, include_deleted=False)
+        # Resume skip-counts through a re-executed scan, so it must see the
+        # same row order every run. Scan order over a multi-file source is
+        # otherwise unspecified; a query with no ORDER BY of its own gets a
+        # deterministic one over the (unique) internal id field, inserted
+        # before any LIMIT/OFFSET suffix so it stays valid SQL.
+        limit_offset_suffix = plan.sql[len(plan.source_sql):]
+        execution_sql = plan.source_sql
+        if not plan.has_order_by:
+            execution_sql += f" ORDER BY {_quote_identifier(_INTERNAL_ID_FIELD)}"
+        execution_sql += limit_offset_suffix
         output_directory = self.settings.bulk_query_results_directory / job_id
         output_directory.mkdir(parents=True, exist_ok=True)
         manifest_parts = self._load_manifest(output_directory)
@@ -75,7 +85,7 @@ class BulkQueryWorker:
         written_parts = 0
 
         with self.engine.connection(objects=(plan.object_name,)) as connection:
-            cursor = connection.execute(plan.sql, plan.parameters)
+            cursor = connection.execute(execution_sql, plan.parameters)
             columns = [column[0] for column in cursor.description]
             public_indexes = [
                 index for index, column in enumerate(columns) if column != _INTERNAL_ID_FIELD

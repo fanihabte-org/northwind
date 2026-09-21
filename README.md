@@ -201,6 +201,35 @@ No `OR`, no aggregates, no subqueries.
 as Salesforce does — which is why offset paging cannot be your extraction strategy.
 Use the cursor, or keyset on `LastModifiedDate`.
 
+### Schema discovery: EntityDefinition and FieldDefinition
+
+Every configured object is also queryable through the Metadata Catalog, the same
+way real Salesforce's Tooling API works — schema discovery through SOQL, not only
+`/describe`:
+
+```bash
+curl -s -H "Authorization: Bearer $TOKEN" --get localhost:8081/services/data/v60.0/query \
+  --data-urlencode "q=SELECT QualifiedApiName, KeyPrefix FROM EntityDefinition"
+
+curl -s -H "Authorization: Bearer $TOKEN" --get localhost:8081/services/data/v60.0/query \
+  --data-urlencode "q=SELECT QualifiedApiName, DataType, ReferenceTo FROM FieldDefinition WHERE EntityDefinition.QualifiedApiName = 'Opportunity'"
+```
+
+Both objects carry real Salesforce restrictions, not just their happy path:
+`LIMIT`/`OFFSET` are accepted and silently ignored — the response is always
+unbounded, exactly like the real Tooling API, and exactly the kind of trap this
+project exists to teach — `!=` is rejected (`Only equals comparisons permitted`),
+and `FieldDefinition` cannot be queried unscoped: it requires a filter on
+`EntityDefinition.QualifiedApiName` or `EntityDefinitionId`. `OR`, `NOT`,
+`GROUP BY`, `COUNT()`, and `INCLUDES` are not supported for these two objects —
+same as everywhere else in FakeForce's SOQL support above, not a special
+restriction of theirs.
+
+`FieldDefinition.DataType` is the UI display string Salesforce shows
+(`Text(255)`, `Date/Time`, `Number(18, 2)`, `Lookup(Account)`), not the API type
+name. `ReferenceTo` is inferred from naming convention: a field named `XyzId`
+resolves to `Lookup(Xyz)` when `Xyz` is itself a configured object.
+
 ### Storage, memory and restart behavior
 
 FakeForce never eagerly reads an entire CRM file into Python memory. Object-to-file

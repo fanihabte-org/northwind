@@ -9,6 +9,7 @@ touch a partition that appeared after the plan was taken.
 from __future__ import annotations
 
 import json
+import os
 
 import pyarrow as pa
 import pyarrow.parquet as pq
@@ -188,6 +189,48 @@ def test_the_seed_base_is_superseded_not_rewritten(world) -> None:
     assert seed.read_bytes() == before
     assert catalog.get("Opportunity").compacted_base() != seed
     assert _visible(settings, catalog) == {"006a": "day25", "006b": "base-b"}
+
+
+def test_compaction_skips_a_read_only_delta_root(tmp_path) -> None:
+    """Regression: production configures FAKEFORCE_DATA_ROOTS as seed:state,
+    where seed is mounted read-only. delta_roots() sorts its candidates
+    alphabetically ("seed" < "state"), so picking the first one unconditionally
+    always landed compaction's output on the read-only mount.
+    """
+    seed = tmp_path / "seed"
+    state = tmp_path / "state"
+    _write(seed / "crm_opportunities.parquet", [("006a", "base-a", "2026-07-24T00:00:00Z")])
+    _write(
+        state / "opportunities" / "business_date=2026-07-25" / "delta.parquet",
+        [("006a", "day25", "2026-07-25T00:00:00Z")],
+    )
+    (tmp_path / "catalog.json").write_text(json.dumps({
+        "version": 1,
+        "objects": [{
+            "name": "Opportunity", "sources": ["crm_opportunities.parquet"],
+            "delta_patterns": ["opportunities/**/*.parquet"],
+            "version_field": "LastModifiedDate", "id_field": "Id", "soft_delete_field": "IsDeleted",
+        }],
+    }))
+    settings = Settings.from_env({
+        "FAKEFORCE_SEED_DIR": str(seed),
+        "FAKEFORCE_DATA_ROOTS": f"{seed}{os.pathsep}{state}",
+        "FAKEFORCE_CATALOG_PATH": str(tmp_path / "catalog.json"),
+        "FAKEFORCE_STATE_DIR": str(tmp_path / "fakeforce_state"),
+        "FAKEFORCE_MEMORY_LIMIT": "256MB",
+    })
+    catalog = DatasetCatalog.from_file(settings.catalog_path, settings.data_roots)
+
+    os.chmod(seed, 0o555)
+    try:
+        result = DeltaCompactor(settings, catalog).compact("Opportunity")
+    finally:
+        os.chmod(seed, 0o755)
+
+    assert result.partitions_merged == 1
+    compacted = catalog.get("Opportunity").compacted_base()
+    assert compacted is not None
+    assert compacted.is_relative_to(state)
 
 
 def test_compaction_removes_the_emptied_partition_directories(world) -> None:

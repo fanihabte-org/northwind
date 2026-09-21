@@ -53,6 +53,23 @@ class CompactionError(RuntimeError):
     """Compaction cannot run safely against this object."""
 
 
+def _nearest_existing_ancestor_is_writable(path: Path) -> bool:
+    """Whether ``mkdir(parents=True)`` could create ``path``, without trying.
+
+    A delta root a partition was never published into does not exist yet --
+    that is not the same as being read-only. Walk up to whichever ancestor
+    does exist and check that one; ``mkdir(parents=True, exist_ok=True)``
+    would need exactly that ancestor to be writable to create the rest.
+    """
+    current = path
+    while not current.exists():
+        parent = current.parent
+        if parent == current:
+            return False
+        current = parent
+    return os.access(current, os.W_OK)
+
+
 @dataclass(frozen=True)
 class CompactionPlan:
     object_name: str
@@ -151,10 +168,23 @@ class DeltaCompactor:
         return spec
 
     def _compacted_path(self, spec: DatasetSpec) -> Path:
+        """The first configured delta root that can actually be written to.
+
+        ``delta_roots()`` returns every configured root sorted, with no
+        guarantee any given one is writable -- a deployment's seed and state
+        roots are both valid delta roots, but the seed is mounted read-only
+        and happens to sort first ("seed" < "state"). Picking ``roots[0]``
+        unconditionally sent compaction's output at a read-only mount in
+        production. Only inspects existing directories, so this stays safe
+        to call from ``--dry-run``: it never creates anything.
+        """
         roots = spec.delta_roots()
-        if not roots:
-            raise CompactionError(f"{spec.object_name} has no resolvable delta root")
-        return roots[0] / COMPACTED_DIRECTORY / COMPACTED_FILENAME
+        writable = [root for root in roots if _nearest_existing_ancestor_is_writable(root)]
+        if not writable:
+            raise CompactionError(
+                f"{spec.object_name} has no writable delta root among {roots or '(none configured)'}"
+            )
+        return writable[0] / COMPACTED_DIRECTORY / COMPACTED_FILENAME
 
     def _write_merged(
         self, spec: DatasetSpec, partitions: tuple[Path, ...], destination: Path

@@ -103,6 +103,12 @@ class LazyQueryService:
                 "INVALID_TYPE", f"sObject type '{ast.object_name}' is not supported"
             )
         object_name = spec.object_name
+        if spec.required_filter_fields and not self._has_required_filter(ast.predicates, spec):
+            raise QueryValidationError(
+                "MALFORMED_QUERY",
+                f"{object_name} requires a filter on "
+                f"{' or '.join(spec.required_filter_fields)}",
+            )
 
         fields = self._fields(ast, spec)
         clauses: list[str] = []
@@ -133,6 +139,14 @@ class LazyQueryService:
             )
 
         sql = source_sql
+
+        # Metadata Catalog entities accept LIMIT/OFFSET but silently ignore
+        # them -- the real Tooling API returns the unbounded result either way.
+        if not spec.supports_limit:
+            return QueryPlan(
+                object_name, fields, spec.id_field, source_sql, sql, tuple(parameters),
+                has_order_by=ast.order_by is not None,
+            )
 
         if ast.offset > MAX_OFFSET:
             raise QueryValidationError(
@@ -340,6 +354,16 @@ class LazyQueryService:
         return canonical
 
     @classmethod
+    def _has_required_filter(cls, predicates: tuple[Predicate, ...], spec: DatasetSpec) -> bool:
+        required = set(spec.required_filter_fields)
+        return any(
+            isinstance(predicate, Comparison)
+            and predicate.operator == "="
+            and cls._field_name(predicate.field, spec) in required
+            for predicate in predicates
+        )
+
+    @classmethod
     def _where(
         cls, predicates: tuple[Predicate, ...], spec: DatasetSpec
     ) -> tuple[list[str], list[Any]]:
@@ -351,6 +375,8 @@ class LazyQueryService:
             else:
                 assert isinstance(predicate, Comparison)
                 field, operator, value = predicate.field, predicate.operator, predicate.value
+            if operator == "!=" and not spec.supports_ne:
+                raise QueryValidationError("MALFORMED_QUERY", "Only equals comparisons permitted")
             field = cls._field_name(field, spec)
             quoted_field = _quote_identifier(field)
             if operator == "IN":

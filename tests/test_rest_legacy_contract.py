@@ -76,6 +76,28 @@ def test_offset_above_salesforce_limit_has_shaped_error(
     assert response.json()[0]["errorCode"] == "NUMBER_OUTSIDE_VALID_RANGE"
 
 
+def test_missing_query_param_has_a_salesforce_shaped_error_not_fastapis_detail(
+    client: TestClient, auth_headers: dict[str, str]
+) -> None:
+    response = client.get("/services/data/v60.0/query", headers=auth_headers)
+
+    assert response.status_code == 400
+    assert response.json()[0]["errorCode"] == "MALFORMED_QUERY"
+
+
+def test_malformed_json_body_has_a_salesforce_shaped_error_not_a_bare_500(
+    client: TestClient, auth_headers: dict[str, str]
+) -> None:
+    response = client.post(
+        "/services/data/v60.0/jobs/query",
+        headers={**auth_headers, "content-type": "application/json"},
+        content=b"{not json",
+    )
+
+    assert response.status_code == 400
+    assert response.json()[0]["errorCode"] == "JSON_PARSER_ERROR"
+
+
 def test_cursor_paging_keeps_only_small_query_metadata(
     client: TestClient, auth_headers: dict[str, str]
 ) -> None:
